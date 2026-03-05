@@ -1,2 +1,9 @@
-python_sources()
-python_tests(name="tests")
+python_sources(
+    resolve="pants-plugins",
+    interpreter_constraints=["==3.11.*"],
+)
+python_tests(
+    name="tests",
+    resolve="pants-plugins",
+    interpreter_constraints=["==3.11.*"],
+)

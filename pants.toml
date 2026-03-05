@@ -3,6 +3,7 @@ pants_version = "2.31.0"
 pythonpath = ["%(buildroot)s/pants-plugins"]
 backend_packages = [
   "pants.backend.python",
+  "pants.backend.python.providers.experimental.python_build_standalone",
   "pants.backend.plugin_development",
   "pkl",
 ]
@@ -11,4 +12,12 @@ backend_packages = [
 root_patterns = ["pants-plugins", "/"]
 
 [python]
-interpreter_constraints = [">=3.9,<3.13"]
+enable_resolves = true
+interpreter_constraints = [">=3.9,<3.14"]
+
+[python.resolves]
+python-default = "3rdparty/python/default.lock"
+pants-plugins = "pants-plugins/lock.txt"
+
+[python.resolves_to_interpreter_constraints]
+pants-plugins = ["==3.11.*"]
