@@ -1,4 +1,4 @@
-"""Tests for the PKL formatter rule (T07).
+"""Tests for the PKL formatter rule.
 
 Uses RuleRunner with the real pkl binary to verify `pkl format --write` behaviour.
 Requires network access on first run to download pkl.
@@ -19,7 +19,7 @@ from pants.testutil.rule_runner import RuleRunner
 from pkl import register as pkl_register
 from pkl.lint.fmt import register as fmt_register
 from pkl.lint.fmt.rules import PklFmtFieldSet, PklFmtRequest
-from pkl.target_types import PklSourceTarget, PklSourcesTarget
+
 
 
 @pytest.fixture

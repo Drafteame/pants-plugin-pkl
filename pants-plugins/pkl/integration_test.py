@@ -1,4 +1,4 @@
-"""End-to-end integration test for the PKL Pants plugin (T14).
+"""End-to-end integration test for the PKL Pants plugin.
 
 Exercises all implemented goals — target listing, eval-check lint, formatting,
 test running, packaging, and dependency inference — from a single shared

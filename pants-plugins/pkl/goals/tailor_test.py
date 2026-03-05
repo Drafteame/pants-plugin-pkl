@@ -1,4 +1,4 @@
-"""Tests for PKL tailor rules (T11).
+"""Tests for PKL tailor rules.
 
 Tests use RuleRunner with the tailor rules to verify that BUILD targets are
 suggested for .pkl files in various configurations.
@@ -10,7 +10,6 @@ import pytest
 
 from pants.core.goals.tailor import (
     AllOwnedSources,
-    PutativeTarget,
     PutativeTargets,
     rules as tailor_rules,
 )
@@ -19,7 +18,7 @@ from pants.testutil.rule_runner import RuleRunner
 
 from pkl import register as pkl_register
 from pkl.goals.tailor import PutativePklTargetsRequest, rules as pkl_tailor_rules
-from pkl.target_types import PklSourcesTarget, PklTestsTarget
+
 
 
 @pytest.fixture

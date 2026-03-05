@@ -1,4 +1,4 @@
-"""Integration tests for the core PKL plugin registration (T04).
+"""Integration tests for the core PKL plugin registration.
 
 Verifies that the `pkl` backend registers target types correctly and that the
 TargetFilesGenerator machinery generates per-file targets as expected.
@@ -18,7 +18,6 @@ from pkl.target_types import (
     PklTestSourceField,
     PklTestTarget,
     PklTestsTarget,
-    PklPackageTarget,
 )
 
 

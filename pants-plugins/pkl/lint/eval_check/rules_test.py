@@ -1,4 +1,4 @@
-"""Tests for the PKL eval-check lint rule (T05).
+"""Tests for the PKL eval-check lint rule.
 
 These tests use RuleRunner to exercise the full Pants rule graph with a real
 (downloaded) pkl binary.  They are integration tests that require network
@@ -19,7 +19,7 @@ from pants.testutil.rule_runner import RuleRunner
 from pkl import register as pkl_register
 from pkl.lint.eval_check import register as eval_check_register
 from pkl.lint.eval_check.rules import PklEvalCheckFieldSet, PklEvalCheckRequest
-from pkl.target_types import PklSourceTarget, PklSourcesTarget
+
 
 
 @pytest.fixture

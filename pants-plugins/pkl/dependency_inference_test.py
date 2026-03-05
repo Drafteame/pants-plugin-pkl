@@ -1,4 +1,4 @@
-"""Tests for PKL dependency inference (T10).
+"""Tests for PKL dependency inference.
 
 Unit tests cover:
 - JSON output parsing from `pkl analyze imports`
@@ -27,7 +27,7 @@ from pkl.dependency_inference import (
     _parse_analyze_output,
     rules as dep_inf_rules,
 )
-from pkl.target_types import PklSourceTarget, PklSourcesTarget
+
 
 
 # ---------------------------------------------------------------------------

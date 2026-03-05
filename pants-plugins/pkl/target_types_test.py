@@ -6,12 +6,8 @@ from pants.engine.addresses import Address
 from pants.engine.target import (
     COMMON_TARGET_FIELDS,
     AllTargets,
-    BoolField,
-    IntField,
     MultipleSourcesField,
     SingleSourceField,
-    StringField,
-    StringSequenceField,
 )
 from pants.testutil.rule_runner import RuleRunner
 

@@ -1,4 +1,4 @@
-"""Tests for the PKL test runner (T06).
+"""Tests for the PKL test runner.
 
 Uses RuleRunner to exercise `run_pkl_test` with a real pkl binary.
 Requires network access on first run to download pkl.
@@ -19,7 +19,7 @@ from pants.testutil.rule_runner import RuleRunner
 from pkl import register as pkl_register
 from pkl.goals import test as pkl_test_module
 from pkl.goals.test import PklTestFieldSet, PklTestRequest
-from pkl.target_types import PklTestTarget, PklTestsTarget
+
 
 
 @pytest.fixture

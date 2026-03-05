@@ -17,7 +17,7 @@ from pants.testutil.rule_runner import RuleRunner
 
 from pkl import register as pkl_register
 from pkl.goals.package import PklPackageFieldSet, rules as package_rules
-from pkl.target_types import PklPackageTarget, PklSourceTarget
+
 
 
 @pytest.fixture
