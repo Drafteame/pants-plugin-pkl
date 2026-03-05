@@ -1,10 +1,11 @@
 """Auto-generate BUILD targets for `.pkl` files (`pants tailor`).
 
 Detection logic:
-- Read the first few lines of each `.pkl` file.
+- Glob for ``*.pkl`` files (``PklProject`` has no extension, so it is never
+  matched by this glob and requires no explicit exclusion).
+- Read the first few lines of each matched ``.pkl`` file.
 - Files containing ``amends "pkl:test"`` -> grouped as ``pkl_tests()``.
-- Files named ``PklProject`` -> excluded entirely.
-- All other `.pkl` files -> grouped as ``pkl_sources()``.
+- All other ``.pkl`` files -> grouped as ``pkl_sources()``.
 
 One ``pkl_sources()`` and/or ``pkl_tests()`` target is created per directory.
 """
@@ -35,10 +36,6 @@ from pkl.target_types import PklSourcesTarget, PklTestsTarget
 # Marker that identifies a PKL test module.
 _PKL_TEST_MARKER = b'amends "pkl:test"'
 
-# Files with this exact basename are PKL project descriptors and should NOT
-# be included in any generated target.
-_PKL_PROJECT_BASENAME = "PklProject"
-
 # How many bytes of each file to read when looking for the test marker.
 _HEADER_BYTES = 512
 
@@ -57,19 +54,15 @@ async def find_putative_pkl_targets(
     all_pkl_paths = await path_globs_to_paths(request.path_globs("*.pkl"))
 
     # 2. Filter out already-owned files.
+    # Note: `PklProject` files are never matched because the glob above uses
+    # `*.pkl` and `PklProject` has no `.pkl` extension — no explicit exclusion
+    # is needed here.
     unowned = set(all_pkl_paths.files) - set(all_owned_sources)
-
-    # 3. Exclude PklProject files.
-    unowned = {
-        p for p in unowned
-        if not p.endswith(f"/{_PKL_PROJECT_BASENAME}")
-        and p != _PKL_PROJECT_BASENAME
-    }
 
     if not unowned:
         return PutativeTargets([])
 
-    # 4. Read file headers to detect test files (look for `amends "pkl:test"`).
+    # 3. Read file headers to detect test files (look for `amends "pkl:test"`).
     snapshot_digest = await path_globs_to_digest(PathGlobs(list(unowned)))
     snapshot = await digest_to_snapshot(snapshot_digest)
     digest_contents = await get_digest_contents(snapshot.digest)
@@ -78,7 +71,7 @@ async def find_putative_pkl_targets(
         fc.path: fc.content[:_HEADER_BYTES] for fc in digest_contents
     }
 
-    # 5. Classify files into test vs source.
+    # 4. Classify files into test vs source.
     test_files: set[str] = set()
     source_files: set[str] = set()
 
@@ -89,7 +82,7 @@ async def find_putative_pkl_targets(
         else:
             source_files.add(path)
 
-    # 6. Group by directory and create PutativeTargets.
+    # 5. Group by directory and create PutativeTargets.
     putative: list[PutativeTarget] = []
 
     for dirname, filenames in sorted(group_by_dir(source_files).items()):

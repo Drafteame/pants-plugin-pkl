@@ -1,4 +1,25 @@
-"""Core registration for the PKL Pants plugin backend."""
+"""Core registration for the PKL Pants plugin backend.
+
+This module registers the minimum set of rules (subsystem, target types,
+process helper, and dependency inference) that are shared by all PKL goals.
+Goal-specific and lint backends are kept in separate sub-packages so that
+users can opt-in only to the features they need.
+
+Full set of available backends for ``pants.toml``::
+
+    backend_packages = [
+        "pkl",                          # core: target types + dep inference
+        "pkl.goals",                    # pants test + pants package + pants tailor
+        "pkl.lint.eval_check",          # pants lint  (pkl eval validation)
+        "pkl.lint.fmt",                 # pants fmt   (pkl format)
+    ]
+
+Register only ``"pkl"`` if you need target types and dependency inference
+without any goals, or register all four for the full feature set.
+
+Note: ``"pkl"`` must always be listed before the other backends because the
+goal and lint backends depend on the target types defined here.
+"""
 
 from pkl import dependency_inference as _dep_inference
 from pkl import pkl_process as _pkl_process

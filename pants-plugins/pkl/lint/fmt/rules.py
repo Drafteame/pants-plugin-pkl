@@ -1,8 +1,10 @@
 """Rules for the PKL formatter (`pkl format` via `pants fmt` / `pants lint`).
 
-Important: `pkl format` does NOT accept `--no-cache`, `--color`, `--allowed-modules`, or
-`--allowed-resources`.  Only `--root-dir .` is valid.  argv is therefore built manually here
-rather than via `build_pkl_argv()`.
+Important: `pkl format` does NOT accept `--root-dir`, `--no-cache`, `--color`,
+`--allowed-modules`, or `--allowed-resources`.  The only relevant flags are
+``--write``, ``--diff-name-only``, ``--silent``, and ``--grammar-version``.
+The argv is therefore built manually here rather than via ``build_pkl_argv()``,
+which would include unsupported sandbox-containment flags.
 
 Requires PKL >= 0.30.0 (the `format` subcommand was introduced in that release).
 """
@@ -57,8 +59,9 @@ async def pkl_fmt(
         MergeDigests((downloaded_pkl.digest, request.snapshot.digest))
     )
 
-    # pkl format only accepts --write, --diff-name-only, --silent, --grammar-version.
-    # It does NOT accept --root-dir, --no-cache, --color, or any eval-style flags.
+    # `pkl format` only accepts: --write, --diff-name-only, --silent, --grammar-version.
+    # It does NOT accept --root-dir, --no-cache, --color, or any eval-style flags,
+    # so we build argv directly rather than using build_pkl_argv().
     argv = [
         downloaded_pkl.exe,
         "format",

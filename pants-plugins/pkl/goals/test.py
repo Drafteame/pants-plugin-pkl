@@ -4,6 +4,10 @@ Each `pkl_test` target is evaluated with `pkl test <source>`.  Exit codes:
   0  — all tests passed
   1  — one or more tests failed
   10 — only expected-file writes occurred (new snapshots created)
+
+Note on batching: ``run_pkl_test`` is invoked with a single-element batch
+(``batch.single_element``).  Pants guarantees this for ``TestRequest`` because
+each PKL test module runs as its own isolated ``Process``.
 """
 
 from __future__ import annotations
