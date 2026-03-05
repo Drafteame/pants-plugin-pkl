@@ -23,13 +23,14 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
-from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
-from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
+from pants.core.util_rules.external_tool import ExternalToolRequest, download_external_tool
+from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
 from pants.engine.addresses import Address
-from pants.engine.fs import Digest, DigestContents, MergeDigests, PathGlobs, Snapshot
+from pants.engine.fs import MergeDigests, PathGlobs
+from pants.engine.intrinsics import execute_process, get_digest_contents, merge_digests, path_globs_to_digest
 from pants.engine.platform import Platform
-from pants.engine.process import FallibleProcessResult, Process
-from pants.engine.rules import Get, collect_rules, rule
+from pants.engine.process import Process
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import (
     AllTargets,
     Dependencies,
@@ -278,28 +279,23 @@ async def infer_pkl_dependencies(
     field_set = request.field_set
 
     # Download the pkl binary.
-    downloaded_pkl = await Get(
-        DownloadedExternalTool,
-        ExternalToolRequest,
-        pkl.get_request(platform),
-    )
+    downloaded_pkl = await download_external_tool(pkl.get_request(platform))
 
     # Get the source file.
-    sources = await Get(SourceFiles, SourceFilesRequest([field_set.source]))
+    sources = await determine_source_files(SourceFilesRequest([field_set.source]))
     if not sources.snapshot.files:
         return InferredDependencies([])
 
     source_file = sources.snapshot.files[0]
 
     # Include ALL PklProject and PklProject.deps.json files so pkl can resolve deps.
-    all_pkl_project_snapshot = await Get(
-        Snapshot, PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    all_pkl_project_digest = await path_globs_to_digest(
+        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
     )
 
     # Merge binary + source + PklProject files into sandbox.
-    input_digest = await Get(
-        Digest,
-        MergeDigests((downloaded_pkl.digest, sources.snapshot.digest, all_pkl_project_snapshot.digest)),
+    input_digest = await merge_digests(
+        MergeDigests((downloaded_pkl.digest, sources.snapshot.digest, all_pkl_project_digest))
     )
 
     # Run `pkl analyze imports -f json <source>`.
@@ -311,19 +307,22 @@ async def infer_pkl_dependencies(
         project_dir=field_set.project_dir.value,
     )
 
-    process = Process(
-        argv=tuple(argv),
-        input_digest=input_digest,
-        description=f"Analyze PKL imports for {source_file}",
+    result = await execute_process(
+        **implicitly(
+            Process(
+                argv=tuple(argv),
+                input_digest=input_digest,
+                description=f"Analyze PKL imports for {source_file}",
+            )
+        )
     )
-    result = await Get(FallibleProcessResult, Process, process)
 
     # Choose parsing strategy based on process success.
     if result.exit_code == 0 and result.stdout:
         import_paths = _parse_analyze_output(result.stdout, source_file)
     else:
         # Fallback: regex over the source text.
-        digest_contents = await Get(DigestContents, Digest, sources.snapshot.digest)
+        digest_contents = await get_digest_contents(sources.snapshot.digest)
         source_text = ""
         for fc in digest_contents:
             if fc.path == source_file:
@@ -347,28 +346,23 @@ async def infer_pkl_test_dependencies(
     field_set = request.field_set
 
     # Download the pkl binary.
-    downloaded_pkl = await Get(
-        DownloadedExternalTool,
-        ExternalToolRequest,
-        pkl.get_request(platform),
-    )
+    downloaded_pkl = await download_external_tool(pkl.get_request(platform))
 
     # Get the source file.
-    sources = await Get(SourceFiles, SourceFilesRequest([field_set.source]))
+    sources = await determine_source_files(SourceFilesRequest([field_set.source]))
     if not sources.snapshot.files:
         return InferredDependencies([])
 
     source_file = sources.snapshot.files[0]
 
     # Include ALL PklProject and PklProject.deps.json files so pkl can resolve deps.
-    all_pkl_project_snapshot = await Get(
-        Snapshot, PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    all_pkl_project_digest = await path_globs_to_digest(
+        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
     )
 
     # Merge binary + source + PklProject files into sandbox.
-    input_digest = await Get(
-        Digest,
-        MergeDigests((downloaded_pkl.digest, sources.snapshot.digest, all_pkl_project_snapshot.digest)),
+    input_digest = await merge_digests(
+        MergeDigests((downloaded_pkl.digest, sources.snapshot.digest, all_pkl_project_digest))
     )
 
     # Run `pkl analyze imports -f json <source>`.
@@ -380,19 +374,22 @@ async def infer_pkl_test_dependencies(
         project_dir=field_set.project_dir.value,
     )
 
-    process = Process(
-        argv=tuple(argv),
-        input_digest=input_digest,
-        description=f"Analyze PKL imports for {source_file}",
+    result = await execute_process(
+        **implicitly(
+            Process(
+                argv=tuple(argv),
+                input_digest=input_digest,
+                description=f"Analyze PKL imports for {source_file}",
+            )
+        )
     )
-    result = await Get(FallibleProcessResult, Process, process)
 
     # Choose parsing strategy based on process success.
     if result.exit_code == 0 and result.stdout:
         import_paths = _parse_analyze_output(result.stdout, source_file)
     else:
         # Fallback: regex over the source text.
-        digest_contents = await Get(DigestContents, Digest, sources.snapshot.digest)
+        digest_contents = await get_digest_contents(sources.snapshot.digest)
         source_text = ""
         for fc in digest_contents:
             if fc.path == source_file:

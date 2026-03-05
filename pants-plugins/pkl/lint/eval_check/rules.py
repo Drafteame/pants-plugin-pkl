@@ -16,18 +16,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pants.core.goals.lint import LintResult, LintTargetsRequest
-from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
+from pants.core.util_rules.external_tool import ExternalToolRequest, download_external_tool
 from pants.core.util_rules.partitions import PartitionerType
-from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
-from pants.engine.fs import Digest, MergeDigests, PathGlobs, Snapshot
+from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
+from pants.engine.fs import MergeDigests, PathGlobs
+from pants.engine.internals.selectors import concurrently
+from pants.engine.internals.graph import transitive_targets
+from pants.engine.intrinsics import execute_process, merge_digests, path_globs_to_digest
 from pants.engine.platform import Platform
-from pants.engine.process import FallibleProcessResult, Process
-from pants.engine.rules import Get, MultiGet, collect_rules, rule
+from pants.engine.process import Process
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import (
     Dependencies,
     FieldSet,
     Target,
-    TransitiveTargets,
     TransitiveTargetsRequest,
 )
 from pkl.lint.eval_check.subsystem import PklEvalCheck
@@ -63,53 +65,49 @@ async def pkl_eval_check(
     pkl_eval_check_subsystem: PklEvalCheck,
     platform: Platform,
 ) -> LintResult:
-    downloaded_pkl = await Get(
-        DownloadedExternalTool,
-        ExternalToolRequest,
-        pkl.get_request(platform),
-    )
+    downloaded_pkl = await download_external_tool(pkl.get_request(platform))
 
     field_sets = request.elements
 
     # Collect per-file source digests.
-    all_source_files = await MultiGet(
-        Get(SourceFiles, SourceFilesRequest([fs.source])) for fs in field_sets
+    all_source_files = await concurrently(
+        determine_source_files(SourceFilesRequest([fs.source]))
+        for fs in field_sets
     )
 
     # Gather transitive dependencies so imports resolve inside the sandbox.
-    transitive_targets_list = await MultiGet(
-        Get(TransitiveTargets, TransitiveTargetsRequest([fs.address]))
+    transitive_targets_list = await concurrently(
+        transitive_targets(**implicitly(TransitiveTargetsRequest([fs.address])))
         for fs in field_sets
     )
-    dep_sources_list = await MultiGet(
-        Get(
-            SourceFiles,
+    dep_sources_list = await concurrently(
+        determine_source_files(
             SourceFilesRequest(
                 [tgt.get(PklSourceField) for tgt in tt.dependencies if tgt.has_field(PklSourceField)],
                 for_sources_types=(PklSourceField,),
                 enable_codegen=False,
-            ),
+            )
         )
         for tt in transitive_targets_list
     )
 
-    # Include ALL PklProject and PklProject.deps.json files so pkl can
-    # resolve @-prefixed package aliases.
-    all_pkl_project_snapshot = await Get(
-        Snapshot, PathGlobs(["**/PklProject", "**/PklProject.deps.json", f"{PKL_PACKAGES_DIR}/**"])
+    # Include ALL PklProject, PklProject.deps.json, and vendored PKL packages
+    # in the sandbox so pkl can resolve @-prefixed package aliases and external
+    # package:// dependencies.
+    all_pkl_project_digest = await path_globs_to_digest(
+        PathGlobs(["**/PklProject", "**/PklProject.deps.json", f"{PKL_PACKAGES_DIR}/**"])
     )
 
     # Merge all digests: binary + per-file sources + dep sources + PklProject.
-    input_digest = await Get(
-        Digest,
+    input_digest = await merge_digests(
         MergeDigests(
             (
                 downloaded_pkl.digest,
                 *(sf.snapshot.digest for sf in all_source_files),
                 *(sf.snapshot.digest for sf in dep_sources_list),
-                all_pkl_project_snapshot.digest,
+                all_pkl_project_digest,
             )
-        ),
+        )
     )
 
     # Run one eval process per source file, all sharing the merged sandbox.
@@ -118,27 +116,29 @@ async def pkl_eval_check(
     # Map values or certain PKL-typed objects.  JSON handles these cases while
     # still propagating all real evaluation errors (type mismatches, constraint
     # violations, unresolved imports, etc.).
-    results: list[FallibleProcessResult] = []
-    for fs in field_sets:
-        source_path = fs.source.file_path
-        argv = build_pkl_argv(
-            downloaded_pkl.exe,
-            "eval",
-            source_path,
-            project_dir=fs.project_dir.value,
-            extra_args=(*pkl_eval_check_subsystem.args, "--format", "json", "-o", "/dev/null"),
-            # Enable cache so external package:// dependencies resolve from
-            # the vendored pkl-packages/ directory (no network required).
-            use_cache=True,
+    results = await concurrently(
+        execute_process(
+            **implicitly(
+                Process(
+                    argv=tuple(
+                        build_pkl_argv(
+                            downloaded_pkl.exe,
+                            "eval",
+                            fs.source.file_path,
+                            project_dir=fs.project_dir.value,
+                            extra_args=(*pkl_eval_check_subsystem.args, "--format", "json", "-o", "/dev/null"),
+                            # Enable cache so external package:// dependencies resolve from
+                            # the vendored pkl-packages/ directory (no network required).
+                            use_cache=True,
+                        )
+                    ),
+                    input_digest=input_digest,
+                    description=f"Validate PKL module {fs.source.file_path}",
+                )
+            )
         )
-
-        process = Process(
-            argv=tuple(argv),
-            input_digest=input_digest,
-            description=f"Validate PKL module {source_path}",
-        )
-        result = await Get(FallibleProcessResult, Process, process)
-        results.append(result)
+        for fs in field_sets
+    )
 
     # Aggregate: any non-zero exit code → overall failure.
     exit_code = max((r.exit_code for r in results), default=0)

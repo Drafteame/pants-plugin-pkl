@@ -12,16 +12,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pants.core.goals.fmt import FmtResult, FmtTargetsRequest
-from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
-from pants.engine.fs import Digest, MergeDigests
+from pants.core.util_rules.external_tool import ExternalToolRequest, download_external_tool
+from pants.core.util_rules.partitions import PartitionerType
+from pants.engine.fs import MergeDigests
+from pants.engine.intrinsics import merge_digests
+from pants.engine.process import execute_process_or_raise
 from pants.engine.platform import Platform
-from pants.engine.process import Process, ProcessResult
-from pants.engine.rules import Get, collect_rules, rule
+from pants.engine.process import Process
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import FieldSet
 from pants.util.logging import LogLevel
 from pants.util.strutil import pluralize
-
-from pants.core.util_rules.partitions import PartitionerType
 
 from pkl.lint.fmt.subsystem import PklFmt
 from pkl.subsystem import PklTool
@@ -48,17 +49,12 @@ async def pkl_fmt(
     pkl_fmt_subsystem: PklFmt,
     platform: Platform,
 ) -> FmtResult:
-    downloaded_pkl = await Get(
-        DownloadedExternalTool,
-        ExternalToolRequest,
-        pkl.get_request(platform),
-    )
+    downloaded_pkl = await download_external_tool(pkl.get_request(platform))
 
     source_files = request.snapshot.files
 
-    input_digest = await Get(
-        Digest,
-        MergeDigests((downloaded_pkl.digest, request.snapshot.digest)),
+    input_digest = await merge_digests(
+        MergeDigests((downloaded_pkl.digest, request.snapshot.digest))
     )
 
     # pkl format only accepts --write, --diff-name-only, --silent, --grammar-version.
@@ -71,14 +67,17 @@ async def pkl_fmt(
         *source_files,
     ]
 
-    process = Process(
-        argv=tuple(argv),
-        input_digest=input_digest,
-        output_files=source_files,
-        description=f"Run pkl format on {pluralize(len(source_files), 'file')}",
-        level=LogLevel.DEBUG,
+    result = await execute_process_or_raise(
+        **implicitly(
+            Process(
+                argv=tuple(argv),
+                input_digest=input_digest,
+                output_files=source_files,
+                description=f"Run pkl format on {pluralize(len(source_files), 'file')}",
+                level=LogLevel.DEBUG,
+            )
+        )
     )
-    result = await Get(ProcessResult, Process, process)
     return await FmtResult.create(request, result)
 
 

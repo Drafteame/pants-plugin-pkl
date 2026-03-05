@@ -12,17 +12,23 @@ import os
 from dataclasses import dataclass
 
 from pants.core.goals.test import ShowOutput, TestFieldSet, TestRequest, TestResult
-from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
-from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
-from pants.engine.fs import Digest, MergeDigests, PathGlobs, Snapshot
+from pants.core.util_rules.external_tool import ExternalToolRequest, download_external_tool
+from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
+from pants.engine.fs import MergeDigests, PathGlobs
+from pants.engine.internals.graph import transitive_targets
+from pants.engine.intrinsics import (
+    digest_to_snapshot,
+    execute_process,
+    merge_digests,
+    path_globs_to_digest,
+)
 from pants.engine.platform import Platform
-from pants.engine.process import FallibleProcessResult, Process
-from pants.engine.rules import Get, collect_rules, rule
+from pants.engine.process import Process
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import (
     Dependencies,
     FieldSet,
     Target,
-    TransitiveTargets,
     TransitiveTargetsRequest,
 )
 from pants.option.option_types import ArgsListOption, BoolOption, IntOption, SkipOption
@@ -99,55 +105,50 @@ async def run_pkl_test(
     source_path = field_set.source.file_path
 
     # 1. Download the pkl binary.
-    downloaded_pkl = await Get(
-        DownloadedExternalTool,
-        ExternalToolRequest,
-        pkl.get_request(platform),
-    )
+    downloaded_pkl = await download_external_tool(pkl.get_request(platform))
 
     # 2. Gather the test source file.
-    sources = await Get(SourceFiles, SourceFilesRequest([field_set.source]))
+    sources = await determine_source_files(SourceFilesRequest([field_set.source]))
 
     # 3. Gather transitive dependencies (imported PKL modules).
-    transitive = await Get(
-        TransitiveTargets, TransitiveTargetsRequest([field_set.address])
+    transitive = await transitive_targets(
+        **implicitly(TransitiveTargetsRequest([field_set.address]))
     )
     dep_source_fields = [
         tgt.get(PklTestSourceField) for tgt in transitive.dependencies if tgt.has_field(PklTestSourceField)
     ] + [
         tgt.get(PklSourceField) for tgt in transitive.dependencies if tgt.has_field(PklSourceField)
     ]
-    dep_sources = await Get(
-        SourceFiles,
+    dep_sources = await determine_source_files(
         SourceFilesRequest(
             dep_source_fields,
             for_sources_types=(PklTestSourceField, PklSourceField),
             enable_codegen=False,
-        ),
+        )
     )
 
     # 4. Glob for snapshot expected files in the same directory.
     source_dir = os.path.dirname(source_path) or "."
     expected_glob = os.path.join(source_dir, "*.pkl-expected.pcf")
-    expected_snapshot = await Get(Snapshot, PathGlobs([expected_glob]))
+    expected_digest = await path_globs_to_digest(PathGlobs([expected_glob]))
+    expected_snapshot = await digest_to_snapshot(expected_digest)
 
     # Include ALL PklProject and PklProject.deps.json files so pkl can resolve deps.
-    all_pkl_project_digest = await Get(
-        Snapshot, PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    all_pkl_project_digest = await path_globs_to_digest(
+        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
     )
 
     # 5. Merge all digests.
-    input_digest = await Get(
-        Digest,
+    input_digest = await merge_digests(
         MergeDigests(
             (
                 downloaded_pkl.digest,
                 sources.snapshot.digest,
                 dep_sources.snapshot.digest,
                 expected_snapshot.digest,
-                all_pkl_project_digest.digest,
+                all_pkl_project_digest,
             )
-        ),
+        )
     )
 
     # 6. Build extra pre-positional flags.
@@ -181,14 +182,17 @@ async def run_pkl_test(
     if field_set.junit_reports.value:
         output_dirs.append(".junit")
 
-    process = Process(
-        argv=tuple(argv),
-        input_digest=input_digest,
-        output_directories=tuple(output_dirs),
-        description=f"Run pkl test on {source_path}",
-        timeout_seconds=timeout_seconds,
+    result = await execute_process(
+        **implicitly(
+            Process(
+                argv=tuple(argv),
+                input_digest=input_digest,
+                output_directories=tuple(output_dirs),
+                description=f"Run pkl test on {source_path}",
+                timeout_seconds=timeout_seconds,
+            )
+        )
     )
-    result = await Get(FallibleProcessResult, Process, process)
 
     return TestResult.from_fallible_process_result(
         (result,),

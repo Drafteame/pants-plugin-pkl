@@ -16,13 +16,20 @@ from dataclasses import dataclass
 from pathlib import PurePath
 
 from pants.core.goals.package import BuiltPackage, BuiltPackageArtifact, PackageFieldSet
-from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
-from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
-from pants.engine.fs import Digest, MergeDigests, PathGlobs, Snapshot
+from pants.core.util_rules.external_tool import ExternalToolRequest, download_external_tool
+from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
+from pants.engine.fs import MergeDigests, PathGlobs
+from pants.engine.internals.graph import transitive_targets
+from pants.engine.intrinsics import (
+    digest_to_snapshot,
+    merge_digests,
+    path_globs_to_digest,
+)
+from pants.engine.process import execute_process_or_raise
 from pants.engine.platform import Platform
-from pants.engine.process import Process, ProcessResult
-from pants.engine.rules import Get, collect_rules, rule
-from pants.engine.target import Dependencies, TransitiveTargets, TransitiveTargetsRequest
+from pants.engine.process import Process
+from pants.engine.rules import collect_rules, implicitly, rule
+from pants.engine.target import Dependencies, TransitiveTargetsRequest
 from pants.engine.unions import UnionRule
 
 from pkl.pkl_process import build_pkl_argv
@@ -75,44 +82,38 @@ async def package_pkl(
     platform: Platform,
 ) -> BuiltPackage:
     # 1. Download the pkl binary.
-    downloaded_pkl = await Get(
-        DownloadedExternalTool,
-        ExternalToolRequest,
-        pkl.get_request(platform),
-    )
+    downloaded_pkl = await download_external_tool(pkl.get_request(platform))
 
     # 2. Gather sources.
-    sources = await Get(SourceFiles, SourceFilesRequest([field_set.source]))
+    sources = await determine_source_files(SourceFilesRequest([field_set.source]))
 
     # 3. Gather transitive dependencies so imports resolve inside the sandbox.
-    transitive = await Get(
-        TransitiveTargets, TransitiveTargetsRequest([field_set.address])
+    transitive = await transitive_targets(
+        **implicitly(TransitiveTargetsRequest([field_set.address]))
     )
-    dep_sources = await Get(
-        SourceFiles,
+    dep_sources = await determine_source_files(
         SourceFilesRequest(
             [tgt.get(PklSourceField) for tgt in transitive.dependencies if tgt.has_field(PklSourceField)],
             for_sources_types=(PklSourceField,),
             enable_codegen=False,
-        ),
+        )
     )
 
     # Include ALL PklProject and PklProject.deps.json files so pkl can resolve deps.
-    all_pkl_project_snapshot = await Get(
-        Snapshot, PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    all_pkl_project_digest = await path_globs_to_digest(
+        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
     )
 
     # 4. Merge all input digests.
-    input_digest = await Get(
-        Digest,
+    input_digest = await merge_digests(
         MergeDigests(
             (
                 downloaded_pkl.digest,
                 sources.snapshot.digest,
                 dep_sources.snapshot.digest,
-                all_pkl_project_snapshot.digest,
+                all_pkl_project_digest,
             )
-        ),
+        )
     )
 
     # 5. Build extra args (shared between modes).
@@ -137,16 +138,19 @@ async def package_pkl(
             extra_args=tuple(extra),
         )
 
-        process = Process(
-            argv=tuple(argv),
-            input_digest=input_digest,
-            output_directories=(output_base,),
-            description=f"Package {source_path} (multi-output)",
+        result = await execute_process_or_raise(
+            **implicitly(
+                Process(
+                    argv=tuple(argv),
+                    input_digest=input_digest,
+                    output_directories=(output_base,),
+                    description=f"Package {source_path} (multi-output)",
+                )
+            )
         )
-        result = await Get(ProcessResult, Process, process)
 
         # Enumerate files written by PKL from the output digest.
-        output_snapshot = await Get(Snapshot, Digest, result.output_digest)
+        output_snapshot = await digest_to_snapshot(result.output_digest)
         artifacts = tuple(BuiltPackageArtifact(f) for f in output_snapshot.files)
     else:
         # ----------------------------------------------------------------
@@ -173,13 +177,16 @@ async def package_pkl(
             extra_args=tuple(extra),
         )
 
-        process = Process(
-            argv=tuple(argv),
-            input_digest=input_digest,
-            output_files=(out_path,),
-            description=f"Package {source_path} as {field_set.output_format.value}",
+        result = await execute_process_or_raise(
+            **implicitly(
+                Process(
+                    argv=tuple(argv),
+                    input_digest=input_digest,
+                    output_files=(out_path,),
+                    description=f"Package {source_path} as {field_set.output_format.value}",
+                )
+            )
         )
-        result = await Get(ProcessResult, Process, process)
         artifacts = (BuiltPackageArtifact(out_path),)
 
     return BuiltPackage(result.output_digest, artifacts=artifacts)

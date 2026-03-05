@@ -2,9 +2,9 @@
 
 Detection logic:
 - Read the first few lines of each `.pkl` file.
-- Files containing ``amends "pkl:test"`` → grouped as ``pkl_tests()``.
-- Files named ``PklProject`` → excluded entirely.
-- All other `.pkl` files → grouped as ``pkl_sources()``.
+- Files containing ``amends "pkl:test"`` -> grouped as ``pkl_tests()``.
+- Files named ``PklProject`` -> excluded entirely.
+- All other `.pkl` files -> grouped as ``pkl_sources()``.
 
 One ``pkl_sources()`` and/or ``pkl_tests()`` target is created per directory.
 """
@@ -19,9 +19,14 @@ from pants.core.goals.tailor import (
     PutativeTargets,
     PutativeTargetsRequest,
 )
-from pants.engine.fs import Digest, DigestContents, PathGlobs, Snapshot
-from pants.engine.intrinsics import path_globs_to_paths
-from pants.engine.rules import Get, collect_rules, rule
+from pants.engine.fs import PathGlobs
+from pants.engine.intrinsics import (
+    digest_to_snapshot,
+    get_digest_contents,
+    path_globs_to_digest,
+    path_globs_to_paths,
+)
+from pants.engine.rules import collect_rules, rule
 from pants.engine.unions import UnionRule
 from pants.util.dirutil import group_by_dir
 
@@ -65,8 +70,9 @@ async def find_putative_pkl_targets(
         return PutativeTargets([])
 
     # 4. Read file headers to detect test files (look for `amends "pkl:test"`).
-    snapshot = await Get(Snapshot, PathGlobs(list(unowned)))
-    digest_contents = await Get(DigestContents, Digest, snapshot.digest)
+    snapshot_digest = await path_globs_to_digest(PathGlobs(list(unowned)))
+    snapshot = await digest_to_snapshot(snapshot_digest)
+    digest_contents = await get_digest_contents(snapshot.digest)
 
     content_map: dict[str, bytes] = {
         fc.path: fc.content[:_HEADER_BYTES] for fc in digest_contents
