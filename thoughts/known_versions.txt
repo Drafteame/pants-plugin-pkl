@@ -1,0 +1,30 @@
+# PKL known_versions for PklTool.default_known_versions
+#
+# Version: 0.31.0 (latest stable as of 2026-03-05)
+# Source:  https://github.com/apple/pkl/releases/tag/0.31.0
+#
+# Format: "version|pants_platform|sha256|byte_length"
+#
+# How these were computed:
+#   curl -L -o pkl-<plat> https://github.com/apple/pkl/releases/download/0.31.0/pkl-<plat>
+#   shasum -a 256 pkl-<plat> | cut -d' ' -f1
+#   wc -c < pkl-<plat> | tr -d ' '
+#
+# SHA256 values also match those published on the GitHub releases page.
+
+"0.31.0|macos_arm64|349402ae32c35382c034b0c0af744ffb0d53a213888c44deec94a7810e144889|98193008",
+"0.31.0|macos_x86_64|9f1cc8e3ac2327bc483b90d0c220da20eb785c3ba3fe92e021f47d3d56768282|100326344",
+"0.31.0|linux_x86_64|5a5c2a889b68ca92ff4258f9d277f92412b98dfef5057daef7564202a20870b6|100535568",
+"0.31.0|linux_arm64|471460cdd11e1cb9ac0a5401fdb05277ae3adb3a4573cc0a9c63ee087c1f93c8|97586680",
+
+# Platform mapping (pkl release name → Pants platform name):
+#   macos-aarch64  → macos_arm64
+#   macos-amd64    → macos_x86_64
+#   linux-amd64    → linux_x86_64
+#   linux-aarch64  → linux_arm64
+
+# Download URLs (template):
+#   https://github.com/apple/pkl/releases/download/{version}/pkl-{pkl_platform}
+#
+# Executable path inside the download (the binary itself):
+#   pkl-{pkl_platform}  (single-file binary, no extraction needed)
