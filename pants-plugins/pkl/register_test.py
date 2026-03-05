@@ -6,6 +6,8 @@ TargetFilesGenerator machinery generates per-file targets as expected.
 
 import pytest
 
+from pants.core.util_rules.external_tool import rules as external_tool_rules
+from pants.core.util_rules.source_files import rules as source_files_rules
 from pants.engine.addresses import Address
 from pants.engine.target import AllTargets
 from pants.testutil.rule_runner import RuleRunner
@@ -25,7 +27,11 @@ from pkl.target_types import (
 def rule_runner() -> RuleRunner:
     """RuleRunner configured with the full set of rules and target types from register.py."""
     return RuleRunner(
-        rules=register.rules(),
+        rules=[
+            *register.rules(),
+            *external_tool_rules(),
+            *source_files_rules(),
+        ],
         target_types=register.target_types(),
     )
 

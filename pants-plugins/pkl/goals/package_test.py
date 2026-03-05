@@ -134,7 +134,7 @@ class TestCustomOutputPath:
 
 class TestExpressionMode:
     def test_expression_produces_artifact(self, rule_runner: RuleRunner) -> None:
-        """Using expression='.name' evaluates a sub-expression of the module."""
+        """Using expression='name' evaluates a sub-expression of the module."""
         rule_runner.write_files(
             {
                 "src/config.pkl": _CONFIG_PKL,
@@ -143,7 +143,7 @@ class TestExpressionMode:
                     '  name="pkg",\n'
                     '  source="config.pkl",\n'
                     '  output_format="json",\n'
-                    '  expression=".name",\n'
+                    '  expression="name",\n'
                     ')\n'
                 ),
             }

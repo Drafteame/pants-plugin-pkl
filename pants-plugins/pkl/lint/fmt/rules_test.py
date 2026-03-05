@@ -57,7 +57,7 @@ def _run_fmt(
 
     snapshot = rule_runner.request(
         Snapshot,
-        PathGlobs([f"{spec_path}/*.pkl"]),
+        [PathGlobs([f"{spec_path}/*.pkl"])],
     )
 
     batch = PklFmtRequest.Batch("", field_sets, partition_metadata=None, snapshot=snapshot)

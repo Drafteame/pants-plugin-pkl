@@ -13,6 +13,8 @@ from pants.core.goals.tailor import (
     PutativeTargets,
     rules as tailor_rules,
 )
+from pants.core.util_rules.external_tool import rules as external_tool_rules
+from pants.core.util_rules.source_files import rules as source_files_rules
 from pants.engine.rules import QueryRule
 from pants.testutil.rule_runner import RuleRunner
 
@@ -28,6 +30,8 @@ def rule_runner() -> RuleRunner:
             *pkl_register.rules(),
             *tailor_rules(),
             *pkl_tailor_rules(),
+            *external_tool_rules(),
+            *source_files_rules(),
             QueryRule(PutativeTargets, [PutativePklTargetsRequest]),
         ],
         target_types=pkl_register.target_types(),
