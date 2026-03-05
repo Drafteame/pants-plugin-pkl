@@ -18,7 +18,6 @@ from pants.engine.platform import Platform
 from pants.engine.process import Process, ProcessResult
 from pants.engine.rules import Get, collect_rules, rule
 from pants.engine.target import FieldSet
-from pants.engine.unions import UnionRule
 from pants.util.logging import LogLevel
 from pants.util.strutil import pluralize
 
@@ -39,6 +38,7 @@ class PklFmtFieldSet(FieldSet):
 class PklFmtRequest(FmtTargetsRequest):
     field_set_type = PklFmtFieldSet
     tool_subsystem = PklFmt
+    partitioner_type = PartitionerType.DEFAULT_SINGLE_PARTITION
 
 
 @rule(desc="Format with pkl format", level=LogLevel.DEBUG)
@@ -61,14 +61,12 @@ async def pkl_fmt(
         MergeDigests((downloaded_pkl.digest, request.snapshot.digest)),
     )
 
-    # pkl format does NOT accept the common sandbox flags (--no-cache, --color, etc.).
-    # Only --root-dir and --write are valid here.
+    # pkl format only accepts --write, --diff-name-only, --silent, --grammar-version.
+    # It does NOT accept --root-dir, --no-cache, --color, or any eval-style flags.
     argv = [
         downloaded_pkl.exe,
         "format",
         "--write",
-        "--root-dir",
-        ".",
         *pkl_fmt_subsystem.args,
         *source_files,
     ]
@@ -87,6 +85,5 @@ async def pkl_fmt(
 def rules():
     return [
         *collect_rules(),
-        *PklFmtRequest.rules(partitioner_type=PartitionerType.DEFAULT_SINGLE_PARTITION),
-        UnionRule(FmtTargetsRequest, PklFmtRequest),
+        *PklFmtRequest.rules(),
     ]

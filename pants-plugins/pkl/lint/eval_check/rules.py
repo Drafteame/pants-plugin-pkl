@@ -23,8 +23,6 @@ from pants.engine.target import (
     TransitiveTargets,
     TransitiveTargetsRequest,
 )
-from pants.engine.unions import UnionRule
-
 from pkl.lint.eval_check.subsystem import PklEvalCheck
 from pkl.pkl_process import build_pkl_argv
 from pkl.subsystem import PklTool
@@ -79,7 +77,7 @@ async def pkl_eval_check(
         Get(
             SourceFiles,
             SourceFilesRequest(
-                tt.dependencies,
+                [tgt.get(PklSourceField) for tgt in tt.dependencies if tgt.has_field(PklSourceField)],
                 for_sources_types=(PklSourceField,),
                 enable_codegen=False,
             ),
@@ -139,5 +137,4 @@ def rules():
     return [
         *collect_rules(),
         *PklEvalCheckRequest.rules(),
-        UnionRule(LintTargetsRequest, PklEvalCheckRequest),
     ]

@@ -34,7 +34,7 @@ from pants.core.util_rules.source_files import rules as source_files_rules
 from pants.engine.addresses import Address
 from pants.engine.fs import Digest, PathGlobs, Snapshot
 from pants.engine.rules import QueryRule
-from pants.engine.target import AllTargets, InferredDependencies
+from pants.engine.target import AllTargets, AllUnexpandedTargets, InferredDependencies
 from pants.testutil.rule_runner import RuleRunner
 
 from pkl import register as pkl_register
@@ -123,6 +123,7 @@ def _make_rule_runner() -> RuleRunner:
             *tailor_rules(),
             # Query rules for direct rule invocation
             QueryRule(AllTargets, []),
+            QueryRule(AllUnexpandedTargets, []),
             QueryRule(LintResult, [PklEvalCheckRequest.Batch]),
             QueryRule(FmtResult, [PklFmtRequest.Batch]),
             QueryRule(TestResult, [PklTestRequest.Batch]),
@@ -166,12 +167,18 @@ class TestListTargets:
         _write_mini_project(rule_runner)
         rule_runner.set_options([], env_inherit={"PATH", "PYENV_ROOT", "HOME"})
 
+        # AllTargets replaces generators with their leaves; use AllUnexpandedTargets to
+        # see the generator targets themselves.
+        unexpanded = rule_runner.request(AllUnexpandedTargets, [])
+        unexpanded_src = [t for t in unexpanded if t.address.spec_path == "src"]
+        unexpanded_aliases = {t.alias for t in unexpanded_src}
+        assert "pkl_sources" in unexpanded_aliases
+
+        # AllTargets only returns the generated leaf targets.
         all_targets = rule_runner.request(AllTargets, [])
         src_targets = [t for t in all_targets if t.address.spec_path == "src"]
-
-        aliases = {t.alias for t in src_targets}
-        assert "pkl_sources" in aliases
-        assert "pkl_source" in aliases
+        leaf_aliases = {t.alias for t in src_targets}
+        assert "pkl_source" in leaf_aliases
 
         # config.pkl, lib.pkl, main.pkl — app_test.pkl is excluded by the default
         # PklGeneratingSourcesField pattern ("!*_test.pkl")
@@ -184,12 +191,17 @@ class TestListTargets:
         _write_mini_project(rule_runner)
         rule_runner.set_options([], env_inherit={"PATH", "PYENV_ROOT", "HOME"})
 
+        # Generator target visible in AllUnexpandedTargets.
+        unexpanded = rule_runner.request(AllUnexpandedTargets, [])
+        unexpanded_src = [t for t in unexpanded if t.address.spec_path == "src"]
+        unexpanded_aliases = {t.alias for t in unexpanded_src}
+        assert "pkl_tests" in unexpanded_aliases
+
+        # Leaf targets visible in AllTargets.
         all_targets = rule_runner.request(AllTargets, [])
         src_targets = [t for t in all_targets if t.address.spec_path == "src"]
-
-        aliases = {t.alias for t in src_targets}
-        assert "pkl_tests" in aliases
-        assert "pkl_test" in aliases
+        leaf_aliases = {t.alias for t in src_targets}
+        assert "pkl_test" in leaf_aliases
 
         # app_test.pkl matches "*_test.pkl"
         test_targets = [t for t in src_targets if t.alias == "pkl_test"]
@@ -302,7 +314,7 @@ class TestFormatter:
             for t in all_targets
             if t.alias == "pkl_source" and t.address.spec_path == "src"
         )
-        snapshot = rule_runner.request(Snapshot, PathGlobs(["src/*.pkl"]))
+        snapshot = rule_runner.request(Snapshot, [PathGlobs(["src/*.pkl"])])
         batch = PklFmtRequest.Batch("", field_sets, partition_metadata=None, snapshot=snapshot)
         result = rule_runner.request(FmtResult, [batch])
 
@@ -326,7 +338,7 @@ class TestFormatter:
             for t in all_targets
             if t.alias == "pkl_source" and t.address.spec_path == "messy"
         )
-        snapshot = rule_runner.request(Snapshot, PathGlobs(["messy/*.pkl"]))
+        snapshot = rule_runner.request(Snapshot, [PathGlobs(["messy/*.pkl"])])
         batch = PklFmtRequest.Batch("", field_sets, partition_metadata=None, snapshot=snapshot)
         result = rule_runner.request(FmtResult, [batch])
 

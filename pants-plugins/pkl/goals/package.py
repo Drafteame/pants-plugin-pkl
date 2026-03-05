@@ -91,7 +91,7 @@ async def package_pkl(
     dep_sources = await Get(
         SourceFiles,
         SourceFilesRequest(
-            transitive.dependencies,
+            [tgt.get(PklSourceField) for tgt in transitive.dependencies if tgt.has_field(PklSourceField)],
             for_sources_types=(PklSourceField,),
             enable_codegen=False,
         ),

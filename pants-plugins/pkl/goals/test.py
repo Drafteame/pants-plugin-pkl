@@ -42,8 +42,8 @@ from pkl.target_types import (
 
 
 class PklTestSubsystem(Subsystem):
-    options_scope = "pkl-test"
-    name = "pkl-test"
+    options_scope = "pkl-test-runner"
+    name = "pkl-test-runner"
     help = "Options for the PKL test runner (`pants test`)."
 
     skip = SkipOption("test")
@@ -111,10 +111,15 @@ async def run_pkl_test(
     transitive = await Get(
         TransitiveTargets, TransitiveTargetsRequest([field_set.address])
     )
+    dep_source_fields = [
+        tgt.get(PklTestSourceField) for tgt in transitive.dependencies if tgt.has_field(PklTestSourceField)
+    ] + [
+        tgt.get(PklSourceField) for tgt in transitive.dependencies if tgt.has_field(PklSourceField)
+    ]
     dep_sources = await Get(
         SourceFiles,
         SourceFilesRequest(
-            transitive.dependencies,
+            dep_source_fields,
             for_sources_types=(PklTestSourceField, PklSourceField),
             enable_codegen=False,
         ),
@@ -174,7 +179,7 @@ async def run_pkl_test(
     result = await Get(FallibleProcessResult, Process, process)
 
     return TestResult.from_fallible_process_result(
-        result,
+        (result,),
         address=field_set.address,
         output_setting=ShowOutput.ALL,
     )
