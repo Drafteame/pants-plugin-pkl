@@ -81,8 +81,17 @@ def _extract_local_paths_from_regex(source_text: str, source_file: str) -> list[
             continue
         # Treat as a path relative to the importing file's directory.
         resolved = str(PurePosixPath(source_dir) / uri)
-        # Normalize away ".." components.
-        resolved = str(PurePosixPath(resolved))
+        # Normalize away ".." components using os.path.normpath-style logic.
+        # PurePosixPath does NOT resolve ".." — we must do it manually.
+        parts = resolved.split("/")
+        normalized: list[str] = []
+        for part in parts:
+            if part == "..":
+                if normalized:
+                    normalized.pop()
+            elif part and part != ".":
+                normalized.append(part)
+        resolved = "/".join(normalized)
         paths.append(resolved)
     return paths
 

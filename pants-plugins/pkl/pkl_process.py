@@ -34,8 +34,8 @@ def build_pkl_argv(
         * ``--root-dir .`` restricts file access to the sandbox root.
         * ``--no-cache`` prevents reading/writing ``~/.pkl/cache``.
         * ``--color never`` suppresses ANSI escape codes in captured output.
-        * ``--allowed-modules`` removes ``https:`` and ``repl:`` (blocks
-          network access and the REPL).
+        * ``--allowed-modules`` removes ``https:`` (blocks network access)
+          but keeps ``repl:`` (required for ``pkl eval -x`` expressions).
         * ``--allowed-resources`` keeps ``env:``, ``prop:``, and
           ``projectpackage:`` only (no ``file:``).
         * ``pkl format`` does NOT accept the common flags; use
@@ -50,7 +50,7 @@ def build_pkl_argv(
         argv.extend([
             "--no-cache",
             "--color", "never",
-            "--allowed-modules", "pkl:,file:,modulepath:,projectpackage:",
+            "--allowed-modules", "pkl:,file:,modulepath:,projectpackage:,repl:",
             "--allowed-resources", "env:,prop:,projectpackage:",
         ])
 
