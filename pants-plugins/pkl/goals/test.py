@@ -49,9 +49,10 @@ class PklTestSubsystem(Subsystem):
     skip = SkipOption("test")
     args = ArgsListOption(example="--overwrite")
     timeout_default = IntOption(
-        default=None,
+        default=0,
         help=(
             "Default timeout in seconds for each `pkl test` invocation. "
+            "A value of 0 means no timeout. "
             "Can be overridden per-target with the `timeout` field."
         ),
         advanced=True,
@@ -130,6 +131,11 @@ async def run_pkl_test(
     expected_glob = os.path.join(source_dir, "*.pkl-expected.pcf")
     expected_snapshot = await Get(Snapshot, PathGlobs([expected_glob]))
 
+    # Include ALL PklProject and PklProject.deps.json files so pkl can resolve deps.
+    all_pkl_project_digest = await Get(
+        Snapshot, PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    )
+
     # 5. Merge all digests.
     input_digest = await Get(
         Digest,
@@ -139,30 +145,36 @@ async def run_pkl_test(
                 sources.snapshot.digest,
                 dep_sources.snapshot.digest,
                 expected_snapshot.digest,
+                all_pkl_project_digest.digest,
             )
         ),
     )
 
-    # 6. Build argv using the shared helper.
+    # 6. Build extra pre-positional flags.
+    # All optional flags (--junit-reports, --overwrite) must appear BEFORE the
+    # positional source-path argument.  We collect them into `pre_args` and pass
+    # them via `extra_args` so that `build_pkl_argv` inserts them in the correct
+    # position (after project-dir, before positional args).  This avoids the
+    # fragile `argv.insert(-1, ...)` pattern which silently breaks when there is
+    # more than one positional argument.
+    pre_args: list[str] = list(field_set.extra_args.value or ())
+
+    if field_set.junit_reports.value:
+        pre_args.extend(["--junit-reports", ".junit"])
+
+    if pkl_test_subsystem.overwrite:
+        pre_args.append("--overwrite")
+
     argv = build_pkl_argv(
         downloaded_pkl.exe,
         "test",
         source_path,
         project_dir=field_set.project_dir.value,
-        extra_args=tuple(field_set.extra_args.value or ()),
+        extra_args=tuple(pre_args),
     )
 
-    # Append JUnit flag before the source argument (before *args positional params).
-    if field_set.junit_reports.value:
-        # Insert before the last element (the source path) so it comes before positional args.
-        argv.insert(-1, "--junit-reports")
-        argv.insert(-1, ".junit")
-
-    if pkl_test_subsystem.overwrite:
-        argv.insert(-1, "--overwrite")
-
-    # 7. Determine timeout: per-target field wins, then subsystem default.
-    timeout_seconds = field_set.timeout.value or pkl_test_subsystem.timeout_default
+    # 7. Determine timeout: per-target field wins, then subsystem default (0 = no timeout).
+    timeout_seconds = field_set.timeout.value or pkl_test_subsystem.timeout_default or None
 
     # 8. Output directories: source dir captures .pkl-actual.pcf / .pkl-expected.pcf files.
     output_dirs = [source_dir]

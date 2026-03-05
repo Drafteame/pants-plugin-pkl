@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.engine.addresses import Address
-from pants.engine.fs import Digest, DigestContents, MergeDigests
+from pants.engine.fs import Digest, DigestContents, MergeDigests, PathGlobs, Snapshot
 from pants.engine.platform import Platform
 from pants.engine.process import FallibleProcessResult, Process
 from pants.engine.rules import Get, collect_rules, rule
@@ -201,10 +201,15 @@ async def infer_pkl_dependencies(
 
     source_file = sources.snapshot.files[0]
 
-    # Merge binary + source into sandbox.
+    # Include ALL PklProject and PklProject.deps.json files so pkl can resolve deps.
+    all_pkl_project_snapshot = await Get(
+        Snapshot, PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    )
+
+    # Merge binary + source + PklProject files into sandbox.
     input_digest = await Get(
         Digest,
-        MergeDigests((downloaded_pkl.digest, sources.snapshot.digest)),
+        MergeDigests((downloaded_pkl.digest, sources.snapshot.digest, all_pkl_project_snapshot.digest)),
     )
 
     # Run `pkl analyze imports -f json <source>`.

@@ -1,8 +1,14 @@
 """Rules for the PKL eval-check lint goal.
 
-Runs `pkl eval -o /dev/null <source>` for each PKL source file and reports
-a lint failure if the exit code is non-zero.  This catches type errors,
-constraint violations, unresolved imports, and other evaluation-time errors.
+Runs `pkl eval --format json -o /dev/null <source>` for each PKL source file
+and reports a lint failure if the exit code is non-zero.  This catches type
+errors, constraint violations, unresolved imports, and other evaluation-time
+errors.
+
+Using ``--format json`` (rather than the default PCF renderer) avoids the
+serialization error that occurs when the module outputs a ``Map`` or certain
+PKL-typed values that PCF cannot handle.  JSON can render ``Map`` values and
+most typed objects, while still propagating all real evaluation errors.
 """
 
 from __future__ import annotations
@@ -11,8 +17,9 @@ from dataclasses import dataclass
 
 from pants.core.goals.lint import LintResult, LintTargetsRequest
 from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
+from pants.core.util_rules.partitions import PartitionerType
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
-from pants.engine.fs import Digest, MergeDigests
+from pants.engine.fs import Digest, MergeDigests, PathGlobs, Snapshot
 from pants.engine.platform import Platform
 from pants.engine.process import FallibleProcessResult, Process
 from pants.engine.rules import Get, MultiGet, collect_rules, rule
@@ -46,6 +53,7 @@ class PklEvalCheckFieldSet(FieldSet):
 class PklEvalCheckRequest(LintTargetsRequest):
     field_set_type = PklEvalCheckFieldSet
     tool_subsystem = PklEvalCheck
+    partitioner_type = PartitionerType.DEFAULT_SINGLE_PARTITION
 
 
 @rule(desc="Validate PKL source with pkl eval")
@@ -85,7 +93,13 @@ async def pkl_eval_check(
         for tt in transitive_targets_list
     )
 
-    # Merge all digests: binary + per-file sources + dep sources.
+    # Include ALL PklProject and PklProject.deps.json files so pkl can
+    # resolve @-prefixed package aliases.
+    all_pkl_project_snapshot = await Get(
+        Snapshot, PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    )
+
+    # Merge all digests: binary + per-file sources + dep sources + PklProject.
     input_digest = await Get(
         Digest,
         MergeDigests(
@@ -93,11 +107,17 @@ async def pkl_eval_check(
                 downloaded_pkl.digest,
                 *(sf.snapshot.digest for sf in all_source_files),
                 *(sf.snapshot.digest for sf in dep_sources_list),
+                all_pkl_project_snapshot.digest,
             )
         ),
     )
 
     # Run one eval process per source file, all sharing the merged sandbox.
+    # `--format json -o /dev/null` evaluates the module and discards the output.
+    # JSON is used instead of the default PCF renderer because PCF cannot render
+    # Map values or certain PKL-typed objects.  JSON handles these cases while
+    # still propagating all real evaluation errors (type mismatches, constraint
+    # violations, unresolved imports, etc.).
     results: list[FallibleProcessResult] = []
     for fs in field_sets:
         source_path = fs.source.file_path
@@ -106,10 +126,8 @@ async def pkl_eval_check(
             "eval",
             source_path,
             project_dir=fs.project_dir.value,
-            extra_args=tuple(pkl_eval_check_subsystem.args),
+            extra_args=(*pkl_eval_check_subsystem.args, "--format", "json", "-o", "/dev/null"),
         )
-        # Discard output — we only care about the exit code.
-        argv.extend(["-o", "/dev/null"])
 
         process = Process(
             argv=tuple(argv),

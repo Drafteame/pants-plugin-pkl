@@ -18,7 +18,7 @@ from pathlib import PurePath
 from pants.core.goals.package import BuiltPackage, BuiltPackageArtifact, PackageFieldSet
 from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
-from pants.engine.fs import Digest, MergeDigests, Snapshot
+from pants.engine.fs import Digest, MergeDigests, PathGlobs, Snapshot
 from pants.engine.platform import Platform
 from pants.engine.process import Process, ProcessResult
 from pants.engine.rules import Get, collect_rules, rule
@@ -97,6 +97,11 @@ async def package_pkl(
         ),
     )
 
+    # Include ALL PklProject and PklProject.deps.json files so pkl can resolve deps.
+    all_pkl_project_snapshot = await Get(
+        Snapshot, PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    )
+
     # 4. Merge all input digests.
     input_digest = await Get(
         Digest,
@@ -105,6 +110,7 @@ async def package_pkl(
                 downloaded_pkl.digest,
                 sources.snapshot.digest,
                 dep_sources.snapshot.digest,
+                all_pkl_project_snapshot.digest,
             )
         ),
     )
