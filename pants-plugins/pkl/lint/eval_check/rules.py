@@ -31,7 +31,7 @@ from pants.engine.target import (
     TransitiveTargetsRequest,
 )
 from pkl.lint.eval_check.subsystem import PklEvalCheck
-from pkl.pkl_process import build_pkl_argv
+from pkl.pkl_process import PKL_PACKAGES_DIR, build_pkl_argv
 from pkl.subsystem import PklTool
 from pkl.target_types import PklProjectDirField, PklSkipEvalCheckField, PklSourceField
 
@@ -96,7 +96,7 @@ async def pkl_eval_check(
     # Include ALL PklProject and PklProject.deps.json files so pkl can
     # resolve @-prefixed package aliases.
     all_pkl_project_snapshot = await Get(
-        Snapshot, PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+        Snapshot, PathGlobs(["**/PklProject", "**/PklProject.deps.json", f"{PKL_PACKAGES_DIR}/**"])
     )
 
     # Merge all digests: binary + per-file sources + dep sources + PklProject.
@@ -127,6 +127,9 @@ async def pkl_eval_check(
             source_path,
             project_dir=fs.project_dir.value,
             extra_args=(*pkl_eval_check_subsystem.args, "--format", "json", "-o", "/dev/null"),
+            # Enable cache so external package:// dependencies resolve from
+            # the vendored pkl-packages/ directory (no network required).
+            use_cache=True,
         )
 
         process = Process(
