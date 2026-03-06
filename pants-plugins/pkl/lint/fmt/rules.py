@@ -25,8 +25,13 @@ from pants.util.logging import LogLevel
 from pants.util.strutil import pluralize
 
 from pkl.lint.fmt.subsystem import PklFmt
-from pkl.subsystem import PklBinary, PklBinaryRequest
+from pkl.subsystem import PklBinary, PklBinaryRequest, _version_gte
 from pkl.target_types import PklSourceField
+
+
+# `pkl format` was introduced in PKL 0.30.0. Earlier versions do not have
+# the subcommand at all and will error with "Unknown command: format".
+_PKL_FORMAT_MIN_VERSION = "0.30.0"
 
 
 @dataclass(frozen=True)
@@ -49,6 +54,15 @@ async def pkl_fmt(
 ) -> FmtResult:
     # Resolve the pkl binary (system or downloaded).
     pkl_binary = await Get(PklBinary, PklBinaryRequest())
+
+    # pkl format was introduced in PKL 0.30.0.
+    if not _version_gte(pkl_binary.version, _PKL_FORMAT_MIN_VERSION):
+        raise ValueError(
+            f"pkl format requires PKL >= {_PKL_FORMAT_MIN_VERSION}, but the "
+            f"resolved pkl binary is version {pkl_binary.version}. Either "
+            f"upgrade your pkl installation, set [pkl].version to >= "
+            f"{_PKL_FORMAT_MIN_VERSION}, or disable the pkl.lint.fmt backend."
+        )
 
     source_files = request.snapshot.files
 

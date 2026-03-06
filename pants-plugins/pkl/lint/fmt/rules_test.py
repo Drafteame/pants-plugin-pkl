@@ -18,7 +18,8 @@ from pants.testutil.rule_runner import RuleRunner
 
 from pkl import register as pkl_register
 from pkl.lint.fmt import register as fmt_register
-from pkl.lint.fmt.rules import PklFmtFieldSet, PklFmtRequest
+from pkl.lint.fmt.rules import PklFmtFieldSet, PklFmtRequest, _PKL_FORMAT_MIN_VERSION
+from pkl.subsystem import _version_gte
 
 
 
@@ -105,3 +106,33 @@ class TestPklFmtMultipleFiles:
         )
         # Both files are already properly formatted.
         assert result.did_change is False
+
+
+class TestPklFmtVersionGate:
+    """Unit tests for the _PKL_FORMAT_MIN_VERSION constant and its guard logic.
+
+    These tests do not spin up a RuleRunner; they verify the pure-Python version
+    comparison that protects pkl_fmt from running against a binary too old to have
+    the `format` subcommand.
+    """
+
+    def test_min_version_constant_is_0_30_0(self):
+        assert _PKL_FORMAT_MIN_VERSION == "0.30.0"
+
+    @pytest.mark.parametrize(
+        "version",
+        ["0.27.0", "0.28.0", "0.29.0", "0.29.9"],
+    )
+    def test_versions_below_threshold_fail_guard(self, version: str):
+        assert not _version_gte(version, _PKL_FORMAT_MIN_VERSION), (
+            f"{version!r} should be below {_PKL_FORMAT_MIN_VERSION!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "version",
+        ["0.30.0", "0.31.0", "0.32.0", "1.0.0"],
+    )
+    def test_versions_at_or_above_threshold_pass_guard(self, version: str):
+        assert _version_gte(version, _PKL_FORMAT_MIN_VERSION), (
+            f"{version!r} should be >= {_PKL_FORMAT_MIN_VERSION!r}"
+        )
