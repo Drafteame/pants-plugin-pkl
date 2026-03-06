@@ -23,14 +23,12 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
-from pants.core.util_rules.external_tool import ExternalToolRequest, download_external_tool
 from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
 from pants.engine.addresses import Address
 from pants.engine.fs import MergeDigests, PathGlobs
 from pants.engine.intrinsics import execute_process, get_digest_contents, merge_digests, path_globs_to_digest
-from pants.engine.platform import Platform
 from pants.engine.process import Process
-from pants.engine.rules import collect_rules, implicitly, rule
+from pants.engine.rules import Get, collect_rules, implicitly, rule
 from pants.engine.target import (
     AllTargets,
     Dependencies,
@@ -41,7 +39,7 @@ from pants.engine.target import (
 from pants.engine.unions import UnionRule
 
 from pkl.pkl_process import PKL_PACKAGES_DIR, build_pkl_argv
-from pkl.subsystem import PklTool
+from pkl.subsystem import PklBinary, PklBinaryRequest
 from pkl.target_types import PklProjectDirField, PklSourceField, PklTestSourceField
 
 # ---------------------------------------------------------------------------
@@ -272,14 +270,12 @@ def _resolve_import_addresses(
 @rule(desc="Infer PKL source dependencies via pkl analyze imports")
 async def infer_pkl_dependencies(
     request: InferPklDependenciesRequest,
-    pkl: PklTool,
-    platform: Platform,
     all_targets: AllTargets,
 ) -> InferredDependencies:
     field_set = request.field_set
 
-    # Download the pkl binary.
-    downloaded_pkl = await download_external_tool(pkl.get_request(platform))
+    # Resolve the pkl binary (system or downloaded).
+    pkl_binary = await Get(PklBinary, PklBinaryRequest())
 
     # Get the source file.
     sources = await determine_source_files(SourceFilesRequest([field_set.source]))
@@ -296,12 +292,12 @@ async def infer_pkl_dependencies(
 
     # Merge binary + source + PklProject files into sandbox.
     input_digest = await merge_digests(
-        MergeDigests((downloaded_pkl.digest, sources.snapshot.digest, all_pkl_project_digest))
+        MergeDigests((pkl_binary.digest, sources.snapshot.digest, all_pkl_project_digest))
     )
 
     # Run `pkl analyze imports -f json <source>`.
     argv = build_pkl_argv(
-        downloaded_pkl.exe,
+        pkl_binary.exe,
         ("analyze", "imports"),
         "-f", "json",
         source_file,
@@ -341,14 +337,12 @@ async def infer_pkl_dependencies(
 @rule(desc="Infer PKL test dependencies via pkl analyze imports")
 async def infer_pkl_test_dependencies(
     request: InferPklTestDependenciesRequest,
-    pkl: PklTool,
-    platform: Platform,
     all_targets: AllTargets,
 ) -> InferredDependencies:
     field_set = request.field_set
 
-    # Download the pkl binary.
-    downloaded_pkl = await download_external_tool(pkl.get_request(platform))
+    # Resolve the pkl binary (system or downloaded).
+    pkl_binary = await Get(PklBinary, PklBinaryRequest())
 
     # Get the source file.
     sources = await determine_source_files(SourceFilesRequest([field_set.source]))
@@ -365,12 +359,12 @@ async def infer_pkl_test_dependencies(
 
     # Merge binary + source + PklProject files into sandbox.
     input_digest = await merge_digests(
-        MergeDigests((downloaded_pkl.digest, sources.snapshot.digest, all_pkl_project_digest))
+        MergeDigests((pkl_binary.digest, sources.snapshot.digest, all_pkl_project_digest))
     )
 
     # Run `pkl analyze imports -f json <source>`.
     argv = build_pkl_argv(
-        downloaded_pkl.exe,
+        pkl_binary.exe,
         ("analyze", "imports"),
         "-f", "json",
         source_file,

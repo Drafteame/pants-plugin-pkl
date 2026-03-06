@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from pathlib import PurePath
 
 from pants.core.goals.package import BuiltPackage, BuiltPackageArtifact, PackageFieldSet
-from pants.core.util_rules.external_tool import ExternalToolRequest, download_external_tool
 from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
 from pants.engine.fs import MergeDigests, PathGlobs
 from pants.engine.internals.graph import transitive_targets
@@ -26,14 +25,13 @@ from pants.engine.intrinsics import (
     path_globs_to_digest,
 )
 from pants.engine.process import execute_process_or_raise
-from pants.engine.platform import Platform
 from pants.engine.process import Process
-from pants.engine.rules import collect_rules, implicitly, rule
+from pants.engine.rules import Get, collect_rules, implicitly, rule
 from pants.engine.target import Dependencies, TransitiveTargetsRequest
 from pants.engine.unions import UnionRule
 
 from pkl.pkl_process import PKL_PACKAGES_DIR, build_pkl_argv
-from pkl.subsystem import PklTool
+from pkl.subsystem import PklBinary, PklBinaryRequest
 from pkl.target_types import (
     PklExpressionField,
     PklExtraArgsField,
@@ -78,11 +76,9 @@ class PklPackageFieldSet(PackageFieldSet):
 @rule(desc="Package PKL module")
 async def package_pkl(
     field_set: PklPackageFieldSet,
-    pkl: PklTool,
-    platform: Platform,
 ) -> BuiltPackage:
-    # 1. Download the pkl binary.
-    downloaded_pkl = await download_external_tool(pkl.get_request(platform))
+    # 1. Resolve the pkl binary (system or downloaded).
+    pkl_binary = await Get(PklBinary, PklBinaryRequest())
 
     # 2. Gather sources.
     sources = await determine_source_files(SourceFilesRequest([field_set.source]))
@@ -110,7 +106,7 @@ async def package_pkl(
     input_digest = await merge_digests(
         MergeDigests(
             (
-                downloaded_pkl.digest,
+                pkl_binary.digest,
                 sources.snapshot.digest,
                 dep_sources.snapshot.digest,
                 all_pkl_project_digest,
@@ -133,7 +129,7 @@ async def package_pkl(
         extra.extend(["-m", output_base])
 
         argv = build_pkl_argv(
-            downloaded_pkl.exe,
+            pkl_binary.exe,
             "eval",
             source_path,
             project_dir=field_set.project_dir.value,
@@ -173,7 +169,7 @@ async def package_pkl(
         extra.extend(["-o", out_path])
 
         argv = build_pkl_argv(
-            downloaded_pkl.exe,
+            pkl_binary.exe,
             "eval",
             source_path,
             project_dir=field_set.project_dir.value,

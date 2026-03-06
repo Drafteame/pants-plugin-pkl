@@ -16,16 +16,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pants.core.goals.lint import LintResult, LintTargetsRequest
-from pants.core.util_rules.external_tool import ExternalToolRequest, download_external_tool
 from pants.core.util_rules.partitions import PartitionerType
 from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
 from pants.engine.fs import MergeDigests, PathGlobs
 from pants.engine.internals.selectors import concurrently
 from pants.engine.internals.graph import transitive_targets
 from pants.engine.intrinsics import execute_process, merge_digests, path_globs_to_digest
-from pants.engine.platform import Platform
 from pants.engine.process import Process
-from pants.engine.rules import collect_rules, implicitly, rule
+from pants.engine.rules import Get, collect_rules, implicitly, rule
 from pants.engine.target import (
     Dependencies,
     FieldSet,
@@ -34,7 +32,7 @@ from pants.engine.target import (
 )
 from pkl.lint.eval_check.subsystem import PklEvalCheck
 from pkl.pkl_process import PKL_PACKAGES_DIR, build_pkl_argv
-from pkl.subsystem import PklTool
+from pkl.subsystem import PklBinary, PklBinaryRequest
 from pkl.target_types import PklProjectDirField, PklSkipEvalCheckField, PklSourceField
 
 
@@ -61,11 +59,10 @@ class PklEvalCheckRequest(LintTargetsRequest):
 @rule(desc="Validate PKL source with pkl eval")
 async def pkl_eval_check(
     request: PklEvalCheckRequest.Batch,
-    pkl: PklTool,
     pkl_eval_check_subsystem: PklEvalCheck,
-    platform: Platform,
 ) -> LintResult:
-    downloaded_pkl = await download_external_tool(pkl.get_request(platform))
+    # Resolve the pkl binary (system or downloaded).
+    pkl_binary = await Get(PklBinary, PklBinaryRequest())
 
     field_sets = request.elements
 
@@ -102,7 +99,7 @@ async def pkl_eval_check(
     input_digest = await merge_digests(
         MergeDigests(
             (
-                downloaded_pkl.digest,
+                pkl_binary.digest,
                 *(sf.snapshot.digest for sf in all_source_files),
                 *(sf.snapshot.digest for sf in dep_sources_list),
                 all_pkl_project_digest,
@@ -122,7 +119,7 @@ async def pkl_eval_check(
                 Process(
                     argv=tuple(
                         build_pkl_argv(
-                            downloaded_pkl.exe,
+                            pkl_binary.exe,
                             "eval",
                             fs.source.file_path,
                             project_dir=fs.project_dir.value,

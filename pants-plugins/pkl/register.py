@@ -21,6 +21,8 @@ Note: ``"pkl"`` must always be listed before the other backends because the
 goal and lint backends depend on the target types defined here.
 """
 
+from pants.core.util_rules import system_binaries as _system_binaries
+
 from pkl import dependency_inference as _dep_inference
 from pkl import pkl_process as _pkl_process
 from pkl import subsystem as _subsystem
@@ -43,4 +45,5 @@ def rules():
         *_target_types.rules(),
         *_pkl_process.rules(),
         *_dep_inference.rules(),
+        *_system_binaries.rules(),
     ]

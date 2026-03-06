@@ -16,7 +16,6 @@ import os
 from dataclasses import dataclass
 
 from pants.core.goals.test import ShowOutput, TestFieldSet, TestRequest, TestResult
-from pants.core.util_rules.external_tool import ExternalToolRequest, download_external_tool
 from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
 from pants.engine.fs import MergeDigests, PathGlobs
 from pants.engine.internals.graph import transitive_targets
@@ -26,9 +25,8 @@ from pants.engine.intrinsics import (
     merge_digests,
     path_globs_to_digest,
 )
-from pants.engine.platform import Platform
 from pants.engine.process import Process
-from pants.engine.rules import collect_rules, implicitly, rule
+from pants.engine.rules import Get, collect_rules, implicitly, rule
 from pants.engine.target import (
     Dependencies,
     FieldSet,
@@ -39,7 +37,7 @@ from pants.option.option_types import ArgsListOption, BoolOption, IntOption, Ski
 from pants.option.subsystem import Subsystem
 
 from pkl.pkl_process import PKL_PACKAGES_DIR, build_pkl_argv
-from pkl.subsystem import PklTool
+from pkl.subsystem import PklBinary, PklBinaryRequest
 from pkl.target_types import (
     PklExtraArgsField,
     PklJunitReportsField,
@@ -101,15 +99,13 @@ class PklTestRequest(TestRequest):
 @rule(desc="Run pkl test")
 async def run_pkl_test(
     batch: PklTestRequest.Batch,
-    pkl: PklTool,
     pkl_test_subsystem: PklTestSubsystem,
-    platform: Platform,
 ) -> TestResult:
     field_set = batch.single_element
     source_path = field_set.source.file_path
 
-    # 1. Download the pkl binary.
-    downloaded_pkl = await download_external_tool(pkl.get_request(platform))
+    # 1. Resolve the pkl binary (system or downloaded).
+    pkl_binary = await Get(PklBinary, PklBinaryRequest())
 
     # 2. Gather the test source file.
     sources = await determine_source_files(SourceFilesRequest([field_set.source]))
@@ -148,7 +144,7 @@ async def run_pkl_test(
     input_digest = await merge_digests(
         MergeDigests(
             (
-                downloaded_pkl.digest,
+                pkl_binary.digest,
                 sources.snapshot.digest,
                 dep_sources.snapshot.digest,
                 expected_snapshot.digest,
@@ -173,7 +169,7 @@ async def run_pkl_test(
         pre_args.append("--overwrite")
 
     argv = build_pkl_argv(
-        downloaded_pkl.exe,
+        pkl_binary.exe,
         "test",
         source_path,
         project_dir=field_set.project_dir.value,

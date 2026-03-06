@@ -14,20 +14,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pants.core.goals.fmt import FmtResult, FmtTargetsRequest
-from pants.core.util_rules.external_tool import ExternalToolRequest, download_external_tool
 from pants.core.util_rules.partitions import PartitionerType
 from pants.engine.fs import MergeDigests
 from pants.engine.intrinsics import merge_digests
 from pants.engine.process import execute_process_or_raise
-from pants.engine.platform import Platform
 from pants.engine.process import Process
-from pants.engine.rules import collect_rules, implicitly, rule
+from pants.engine.rules import Get, collect_rules, implicitly, rule
 from pants.engine.target import FieldSet
 from pants.util.logging import LogLevel
 from pants.util.strutil import pluralize
 
 from pkl.lint.fmt.subsystem import PklFmt
-from pkl.subsystem import PklTool
+from pkl.subsystem import PklBinary, PklBinaryRequest
 from pkl.target_types import PklSourceField
 
 
@@ -47,23 +45,22 @@ class PklFmtRequest(FmtTargetsRequest):
 @rule(desc="Format with pkl format", level=LogLevel.DEBUG)
 async def pkl_fmt(
     request: PklFmtRequest.Batch,
-    pkl: PklTool,
     pkl_fmt_subsystem: PklFmt,
-    platform: Platform,
 ) -> FmtResult:
-    downloaded_pkl = await download_external_tool(pkl.get_request(platform))
+    # Resolve the pkl binary (system or downloaded).
+    pkl_binary = await Get(PklBinary, PklBinaryRequest())
 
     source_files = request.snapshot.files
 
     input_digest = await merge_digests(
-        MergeDigests((downloaded_pkl.digest, request.snapshot.digest))
+        MergeDigests((pkl_binary.digest, request.snapshot.digest))
     )
 
     # `pkl format` only accepts: --write, --diff-name-only, --silent, --grammar-version.
     # It does NOT accept --root-dir, --no-cache, --color, or any eval-style flags,
     # so we build argv directly rather than using build_pkl_argv().
     argv = [
-        downloaded_pkl.exe,
+        pkl_binary.exe,
         "format",
         "--write",
         *pkl_fmt_subsystem.args,
