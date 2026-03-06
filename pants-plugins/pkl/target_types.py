@@ -195,6 +195,7 @@ class PklPackageTarget(Target):
         PklProjectDirField,
         PklModulePathField,
         PklExtraArgsField,
+        PklSkipEvalCheckField,
     )
     help = "A PKL module to evaluate and package into a config file (JSON, YAML, XML, etc)."
 

@@ -40,7 +40,7 @@ from pants.engine.target import (
 )
 from pants.engine.unions import UnionRule
 
-from pkl.pkl_process import build_pkl_argv
+from pkl.pkl_process import PKL_PACKAGES_DIR, build_pkl_argv
 from pkl.subsystem import PklTool
 from pkl.target_types import PklProjectDirField, PklSourceField, PklTestSourceField
 
@@ -288,9 +288,10 @@ async def infer_pkl_dependencies(
 
     source_file = sources.snapshot.files[0]
 
-    # Include ALL PklProject and PklProject.deps.json files so pkl can resolve deps.
+    # Include ALL PklProject, PklProject.deps.json, and vendored PKL packages so
+    # `pkl analyze imports` can resolve both local and remote package:// deps.
     all_pkl_project_digest = await path_globs_to_digest(
-        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+        PathGlobs(["**/PklProject", "**/PklProject.deps.json", f"{PKL_PACKAGES_DIR}/**"])
     )
 
     # Merge binary + source + PklProject files into sandbox.
@@ -305,6 +306,7 @@ async def infer_pkl_dependencies(
         "-f", "json",
         source_file,
         project_dir=field_set.project_dir.value,
+        use_cache=True,
     )
 
     result = await execute_process(
@@ -355,9 +357,10 @@ async def infer_pkl_test_dependencies(
 
     source_file = sources.snapshot.files[0]
 
-    # Include ALL PklProject and PklProject.deps.json files so pkl can resolve deps.
+    # Include ALL PklProject, PklProject.deps.json, and vendored PKL packages so
+    # `pkl analyze imports` can resolve both local and remote package:// deps.
     all_pkl_project_digest = await path_globs_to_digest(
-        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+        PathGlobs(["**/PklProject", "**/PklProject.deps.json", f"{PKL_PACKAGES_DIR}/**"])
     )
 
     # Merge binary + source + PklProject files into sandbox.
@@ -372,6 +375,7 @@ async def infer_pkl_test_dependencies(
         "-f", "json",
         source_file,
         project_dir=field_set.project_dir.value,
+        use_cache=True,
     )
 
     result = await execute_process(

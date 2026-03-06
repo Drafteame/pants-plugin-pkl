@@ -38,7 +38,7 @@ from pants.engine.target import (
 from pants.option.option_types import ArgsListOption, BoolOption, IntOption, SkipOption
 from pants.option.subsystem import Subsystem
 
-from pkl.pkl_process import build_pkl_argv
+from pkl.pkl_process import PKL_PACKAGES_DIR, build_pkl_argv
 from pkl.subsystem import PklTool
 from pkl.target_types import (
     PklExtraArgsField,
@@ -137,9 +137,11 @@ async def run_pkl_test(
     expected_digest = await path_globs_to_digest(PathGlobs([expected_glob]))
     expected_snapshot = await digest_to_snapshot(expected_digest)
 
-    # Include ALL PklProject and PklProject.deps.json files so pkl can resolve deps.
+    # Include ALL PklProject, PklProject.deps.json, and vendored PKL packages
+    # so pkl test can resolve both local (@-prefixed) and remote (package://) deps
+    # without any network access.
     all_pkl_project_digest = await path_globs_to_digest(
-        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+        PathGlobs(["**/PklProject", "**/PklProject.deps.json", f"{PKL_PACKAGES_DIR}/**"])
     )
 
     # 5. Merge all digests.
@@ -176,6 +178,7 @@ async def run_pkl_test(
         source_path,
         project_dir=field_set.project_dir.value,
         extra_args=tuple(pre_args),
+        use_cache=True,
     )
 
     # 7. Determine timeout: per-target field wins, then subsystem default (0 = no timeout).
