@@ -19,13 +19,13 @@ from pants.engine.fs import MergeDigests
 from pants.engine.intrinsics import merge_digests
 from pants.engine.process import execute_process_or_raise
 from pants.engine.process import Process
-from pants.engine.rules import Get, collect_rules, implicitly, rule
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import FieldSet
 from pants.util.logging import LogLevel
 from pants.util.strutil import pluralize
 
 from pkl.lint.fmt.subsystem import PklFmt
-from pkl.subsystem import PklBinary, PklBinaryRequest, _version_gte
+from pkl.subsystem import PklBinaryRequest, _version_gte, resolve_pkl_binary
 from pkl.target_types import PklSourceField
 
 
@@ -53,7 +53,7 @@ async def pkl_fmt(
     pkl_fmt_subsystem: PklFmt,
 ) -> FmtResult:
     # Resolve the pkl binary (system or downloaded).
-    pkl_binary = await Get(PklBinary, PklBinaryRequest())
+    pkl_binary = await resolve_pkl_binary(PklBinaryRequest())
 
     # pkl format was introduced in PKL 0.30.0.
     if not _version_gte(pkl_binary.version, _PKL_FORMAT_MIN_VERSION):

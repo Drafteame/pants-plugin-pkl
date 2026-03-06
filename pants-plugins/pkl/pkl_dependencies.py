@@ -27,10 +27,10 @@ from pants.engine.intrinsics import (
     path_globs_to_digest,
 )
 from pants.engine.process import Process, ProcessCacheScope
-from pants.engine.rules import Get, collect_rules, implicitly, rule
+from pants.engine.rules import collect_rules, implicitly, rule
 
 from pkl.pkl_process import PKL_PACKAGES_DIR
-from pkl.subsystem import PklBinary, PklBinaryRequest, PklPackageResolveMode, PklTool
+from pkl.subsystem import PklBinaryRequest, PklPackageResolveMode, PklTool, resolve_pkl_binary
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +155,7 @@ async def resolve_pkl_packages(
     request: PklResolvedPackagesRequest,
     pkl_tool: PklTool,
 ) -> PklResolvedPackages:
-    pkl_binary = await Get(PklBinary, PklBinaryRequest())
+    pkl_binary = await resolve_pkl_binary(PklBinaryRequest())
     mode = pkl_tool.package_resolve_mode
 
     # ----- Vendored path -----

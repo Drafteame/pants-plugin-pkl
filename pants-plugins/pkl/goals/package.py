@@ -26,13 +26,13 @@ from pants.engine.intrinsics import (
 )
 from pants.engine.process import execute_process_or_raise
 from pants.engine.process import Process
-from pants.engine.rules import Get, collect_rules, implicitly, rule
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import Dependencies, TransitiveTargetsRequest
 from pants.engine.unions import UnionRule
 
-from pkl.pkl_dependencies import PklResolvedPackages, PklResolvedPackagesRequest
+from pkl.pkl_dependencies import PklResolvedPackagesRequest, resolve_pkl_packages
 from pkl.pkl_process import build_pkl_argv
-from pkl.subsystem import PklBinary, PklBinaryRequest
+from pkl.subsystem import PklBinaryRequest, resolve_pkl_binary
 from pkl.target_types import (
     PklExpressionField,
     PklExtraArgsField,
@@ -79,7 +79,7 @@ async def package_pkl(
     field_set: PklPackageFieldSet,
 ) -> BuiltPackage:
     # 1. Resolve the pkl binary (system or downloaded).
-    pkl_binary = await Get(PklBinary, PklBinaryRequest())
+    pkl_binary = await resolve_pkl_binary(PklBinaryRequest())
 
     # 2. Gather sources.
     sources = await determine_source_files(SourceFilesRequest([field_set.source]))
@@ -101,7 +101,7 @@ async def package_pkl(
     pkl_project_digest = await path_globs_to_digest(
         PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
     )
-    resolved_packages = await Get(PklResolvedPackages, PklResolvedPackagesRequest())
+    resolved_packages = await resolve_pkl_packages(PklResolvedPackagesRequest())
     all_pkl_project_digest = await merge_digests(
         MergeDigests((pkl_project_digest, resolved_packages.digest))
     )

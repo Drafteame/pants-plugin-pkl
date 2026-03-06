@@ -26,7 +26,7 @@ from pants.engine.intrinsics import (
     path_globs_to_digest,
 )
 from pants.engine.process import Process
-from pants.engine.rules import Get, collect_rules, implicitly, rule
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import (
     Dependencies,
     FieldSet,
@@ -36,9 +36,9 @@ from pants.engine.target import (
 from pants.option.option_types import ArgsListOption, BoolOption, IntOption, SkipOption
 from pants.option.subsystem import Subsystem
 
-from pkl.pkl_dependencies import PklResolvedPackages, PklResolvedPackagesRequest
+from pkl.pkl_dependencies import PklResolvedPackagesRequest, resolve_pkl_packages
 from pkl.pkl_process import build_pkl_argv
-from pkl.subsystem import PklBinary, PklBinaryRequest
+from pkl.subsystem import PklBinaryRequest, resolve_pkl_binary
 from pkl.target_types import (
     PklExtraArgsField,
     PklJunitReportsField,
@@ -106,7 +106,7 @@ async def run_pkl_test(
     source_path = field_set.source.file_path
 
     # 1. Resolve the pkl binary (system or downloaded).
-    pkl_binary = await Get(PklBinary, PklBinaryRequest())
+    pkl_binary = await resolve_pkl_binary(PklBinaryRequest())
 
     # 2. Gather the test source file.
     sources = await determine_source_files(SourceFilesRequest([field_set.source]))
@@ -139,7 +139,7 @@ async def run_pkl_test(
     pkl_project_digest = await path_globs_to_digest(
         PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
     )
-    resolved_packages = await Get(PklResolvedPackages, PklResolvedPackagesRequest())
+    resolved_packages = await resolve_pkl_packages(PklResolvedPackagesRequest())
     all_pkl_project_digest = await merge_digests(
         MergeDigests((pkl_project_digest, resolved_packages.digest))
     )

@@ -23,7 +23,7 @@ from pants.engine.internals.selectors import concurrently
 from pants.engine.internals.graph import transitive_targets
 from pants.engine.intrinsics import execute_process, merge_digests, path_globs_to_digest
 from pants.engine.process import Process
-from pants.engine.rules import Get, collect_rules, implicitly, rule
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import (
     Dependencies,
     FieldSet,
@@ -31,9 +31,9 @@ from pants.engine.target import (
     TransitiveTargetsRequest,
 )
 from pkl.lint.eval_check.subsystem import PklEvalCheck
-from pkl.pkl_dependencies import PklResolvedPackages, PklResolvedPackagesRequest
+from pkl.pkl_dependencies import PklResolvedPackagesRequest, resolve_pkl_packages
 from pkl.pkl_process import build_pkl_argv
-from pkl.subsystem import PklBinary, PklBinaryRequest
+from pkl.subsystem import PklBinaryRequest, resolve_pkl_binary
 from pkl.target_types import PklProjectDirField, PklSkipEvalCheckField, PklSourceField
 
 
@@ -63,7 +63,7 @@ async def pkl_eval_check(
     pkl_eval_check_subsystem: PklEvalCheck,
 ) -> LintResult:
     # Resolve the pkl binary (system or downloaded).
-    pkl_binary = await Get(PklBinary, PklBinaryRequest())
+    pkl_binary = await resolve_pkl_binary(PklBinaryRequest())
 
     field_sets = request.elements
 
@@ -95,7 +95,7 @@ async def pkl_eval_check(
     pkl_project_digest = await path_globs_to_digest(
         PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
     )
-    resolved_packages = await Get(PklResolvedPackages, PklResolvedPackagesRequest())
+    resolved_packages = await resolve_pkl_packages(PklResolvedPackagesRequest())
     all_pkl_project_digest = await merge_digests(
         MergeDigests((pkl_project_digest, resolved_packages.digest))
     )
