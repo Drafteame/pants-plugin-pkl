@@ -23,6 +23,7 @@ A [Pants](https://www.pantsbuild.org) plugin for the [PKL configuration language
 [GLOBAL]
 pythonpath = ["%(buildroot)s/pants-plugins"]
 backend_packages.add = [
+  "pants.backend.plugin_development",
   "pkl",
   "pkl.goals",
   "pkl.lint.fmt",
@@ -30,10 +31,27 @@ backend_packages.add = [
 ]
 ```
 
-3. Add a `pants_requirements` target in `pants-plugins/BUILD` so Pants can resolve the plugin's own dependencies:
+3. Add `pants-plugins` to source roots so Pants can find the plugin modules:
+
+```toml
+[source]
+root_patterns = ["pants-plugins", "/"]
+```
+
+4. Add a `pants_requirements` target in `pants-plugins/BUILD` so Pants can resolve the plugin's own dependencies:
 
 ```python
 pants_requirements(name="pants")
+```
+
+5. Configure the Python resolve for the plugin:
+
+```toml
+[python]
+enable_resolves = true
+
+[python.resolves]
+pants-plugins = "pants-plugins/lock.txt"
 ```
 
 ## Quick start
@@ -133,7 +151,7 @@ args = []
 [pkl-test-runner]
 skip = false
 args = []
-timeout_default = 60
+timeout_default = 0
 overwrite = false
 ```
 
@@ -141,7 +159,7 @@ overwrite = false
 |---|---|---|
 | `skip` | `false` | Skip all PKL tests when running `pants test` |
 | `args` | `[]` | Extra arguments forwarded to `pkl test` |
-| `timeout_default` | `null` | Default timeout in seconds; overridden per-target by the `timeout` field |
+| `timeout_default` | `0` | Default timeout in seconds (`0` means no timeout); overridden per-target by the `timeout` field |
 | `overwrite` | `false` | Pass `--overwrite` to regenerate `.pkl-expected.pcf` snapshot files |
 
 ## Target types
@@ -210,6 +228,7 @@ pkl_package(
     multiple_output_path=".", # base directory for multi-file output
     expression=None,          # evaluate a sub-expression instead of the whole module
     project_dir=None,
+    module_path=None,         # directories/archives to search for modulepath: URIs
     extra_args=[],
 )
 ```
@@ -239,7 +258,7 @@ pants fmt src::
 
 Runs two independent checks:
 
-- **`pkl-eval-check`**: runs `pkl eval -o /dev/null` to verify each source file compiles. Targets with `skip_eval_check=True` are excluded.
+- **`pkl-eval-check`**: runs `pkl eval --format json -o /dev/null` to verify each source file compiles. JSON format is used instead of the default PCF renderer because PCF cannot serialize `Map` values or certain PKL-typed objects. Targets with `skip_eval_check=True` are excluded.
 - **`pkl-fmt`**: checks that files are already formatted (runs `pkl format` and compares output).
 
 ```bash
@@ -272,6 +291,36 @@ Dependencies between `.pkl` files are inferred automatically using `pkl analyze 
 pants dependencies src:config
 ```
 
+## External package dependencies
+
+PKL projects that use external packages (via `PklProject` dependencies like `@formae` or `package://` URIs) require those packages to be **vendored** into a `pkl-packages/` directory at the repository root. This is because the Pants sandbox restricts network access during builds.
+
+To set this up:
+
+1. Make sure your `PklProject` and `PklProject.deps.json` files are committed to the repository.
+
+2. Run `pkl project resolve` locally to download packages into `pkl-packages/`:
+
+```bash
+pkl project resolve -o pkl-packages/
+```
+
+3. Commit the `pkl-packages/` directory to your repository (or generate it in CI before running Pants).
+
+4. Set `project_dir` on your targets if the `PklProject` file is not in the same directory as the PKL source:
+
+```python
+pkl_sources(
+    overrides={
+        "config.pkl": {"project_dir": "config"},
+    },
+)
+```
+
+The plugin automatically includes all `PklProject`, `PklProject.deps.json`, and `pkl-packages/**` files in the sandbox for `eval-check`, `test`, `package`, and dependency inference goals.
+
+> **Note:** `pants fmt` does not need external packages because `pkl format` does not resolve imports.
+
 ## PKL version requirements
 
 | Feature | Minimum PKL version |
@@ -279,3 +328,5 @@ pants dependencies src:config
 | `pants test`, `pants lint` (eval-check), `pants package` | 0.27.0 |
 | `pants fmt` (`pkl format`) | 0.30.0 |
 | Default / recommended | **0.31.0** |
+
+> **Note:** The plugin ships with pre-computed SHA-256 checksums only for version **0.31.0** (macOS arm64/x86_64, Linux arm64/x86_64). To use a different version, you must provide the checksums yourself via the `[pkl].known_versions` option in `pants.toml`.
