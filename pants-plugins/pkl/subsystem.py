@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from enum import Enum
 
 from pants.core.util_rules.external_tool import ExternalTool, download_external_tool
 from pants.core.util_rules.system_binaries import (
@@ -25,7 +26,7 @@ from pants.core.util_rules.system_binaries import (
 from pants.engine.fs import EMPTY_DIGEST, Digest
 from pants.engine.platform import Platform
 from pants.engine.rules import collect_rules, implicitly, rule
-from pants.option.option_types import BoolOption, StrListOption, StrOption
+from pants.option.option_types import BoolOption, EnumOption, StrListOption, StrOption
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,17 @@ def _version_tuple(version_str: str) -> tuple[int, ...]:
 def _version_gte(version: str, minimum: str) -> bool:
     """Return ``True`` if *version* >= *minimum* (semver tuple comparison)."""
     return _version_tuple(version) >= _version_tuple(minimum)
+
+
+# ---------------------------------------------------------------------------
+# PklPackageResolveMode — controls how external PKL packages are resolved
+# ---------------------------------------------------------------------------
+
+
+class PklPackageResolveMode(Enum):
+    AUTO = "auto"
+    VENDORED = "vendored"
+    DOWNLOAD = "download"
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +153,19 @@ class PklTool(ExternalTool):
             "'<PATH>' expands to the contents of the PATH environment variable."
         ),
         advanced=True,
+    )
+
+    package_resolve_mode = EnumOption(
+        default=PklPackageResolveMode.AUTO,
+        help=(
+            "How to resolve external PKL packages.\n\n"
+            "  auto     — Use vendored pkl-packages/ if present, otherwise "
+            "download from PklProject.deps.json (default).\n"
+            "  vendored — Always use vendored pkl-packages/; error if not "
+            "found.\n"
+            "  download — Always download from PklProject.deps.json; ignore "
+            "vendored directory even if present.\n"
+        ),
     )
 
     def generate_url(self, plat: Platform) -> str:

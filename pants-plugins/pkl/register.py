@@ -24,6 +24,7 @@ goal and lint backends depend on the target types defined here.
 from pants.core.util_rules import system_binaries as _system_binaries
 
 from pkl import dependency_inference as _dep_inference
+from pkl import pkl_dependencies as _pkl_dependencies
 from pkl import pkl_process as _pkl_process
 from pkl import subsystem as _subsystem
 from pkl import target_types as _target_types
@@ -45,5 +46,6 @@ def rules():
         *_target_types.rules(),
         *_pkl_process.rules(),
         *_dep_inference.rules(),
+        *_pkl_dependencies.rules(),
         *_system_binaries.rules(),
     ]
