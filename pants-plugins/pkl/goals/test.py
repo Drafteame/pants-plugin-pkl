@@ -36,7 +36,8 @@ from pants.engine.target import (
 from pants.option.option_types import ArgsListOption, BoolOption, IntOption, SkipOption
 from pants.option.subsystem import Subsystem
 
-from pkl.pkl_process import PKL_PACKAGES_DIR, build_pkl_argv
+from pkl.pkl_dependencies import PklResolvedPackages, PklResolvedPackagesRequest
+from pkl.pkl_process import build_pkl_argv
 from pkl.subsystem import PklBinary, PklBinaryRequest
 from pkl.target_types import (
     PklExtraArgsField,
@@ -133,11 +134,14 @@ async def run_pkl_test(
     expected_digest = await path_globs_to_digest(PathGlobs([expected_glob]))
     expected_snapshot = await digest_to_snapshot(expected_digest)
 
-    # Include ALL PklProject, PklProject.deps.json, and vendored PKL packages
-    # so pkl test can resolve both local (@-prefixed) and remote (package://) deps
-    # without any network access.
-    all_pkl_project_digest = await path_globs_to_digest(
-        PathGlobs(["**/PklProject", "**/PklProject.deps.json", f"{PKL_PACKAGES_DIR}/**"])
+    # Include PklProject, PklProject.deps.json, and resolved PKL packages
+    # so pkl test can resolve both local (@-prefixed) and remote (package://) deps.
+    pkl_project_digest = await path_globs_to_digest(
+        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    )
+    resolved_packages = await Get(PklResolvedPackages, PklResolvedPackagesRequest())
+    all_pkl_project_digest = await merge_digests(
+        MergeDigests((pkl_project_digest, resolved_packages.digest))
     )
 
     # 5. Merge all digests.

@@ -31,7 +31,8 @@ from pants.engine.target import (
     TransitiveTargetsRequest,
 )
 from pkl.lint.eval_check.subsystem import PklEvalCheck
-from pkl.pkl_process import PKL_PACKAGES_DIR, build_pkl_argv
+from pkl.pkl_dependencies import PklResolvedPackages, PklResolvedPackagesRequest
+from pkl.pkl_process import build_pkl_argv
 from pkl.subsystem import PklBinary, PklBinaryRequest
 from pkl.target_types import PklProjectDirField, PklSkipEvalCheckField, PklSourceField
 
@@ -88,11 +89,15 @@ async def pkl_eval_check(
         for tt in transitive_targets_list
     )
 
-    # Include ALL PklProject, PklProject.deps.json, and vendored PKL packages
+    # Include PklProject, PklProject.deps.json, and resolved PKL packages
     # in the sandbox so pkl can resolve @-prefixed package aliases and external
     # package:// dependencies.
-    all_pkl_project_digest = await path_globs_to_digest(
-        PathGlobs(["**/PklProject", "**/PklProject.deps.json", f"{PKL_PACKAGES_DIR}/**"])
+    pkl_project_digest = await path_globs_to_digest(
+        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    )
+    resolved_packages = await Get(PklResolvedPackages, PklResolvedPackagesRequest())
+    all_pkl_project_digest = await merge_digests(
+        MergeDigests((pkl_project_digest, resolved_packages.digest))
     )
 
     # Merge all digests: binary + per-file sources + dep sources + PklProject.

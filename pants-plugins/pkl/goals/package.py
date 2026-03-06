@@ -30,7 +30,8 @@ from pants.engine.rules import Get, collect_rules, implicitly, rule
 from pants.engine.target import Dependencies, TransitiveTargetsRequest
 from pants.engine.unions import UnionRule
 
-from pkl.pkl_process import PKL_PACKAGES_DIR, build_pkl_argv
+from pkl.pkl_dependencies import PklResolvedPackages, PklResolvedPackagesRequest
+from pkl.pkl_process import build_pkl_argv
 from pkl.subsystem import PklBinary, PklBinaryRequest
 from pkl.target_types import (
     PklExpressionField,
@@ -95,11 +96,14 @@ async def package_pkl(
         )
     )
 
-    # Include ALL PklProject, PklProject.deps.json, and vendored PKL packages
-    # so pkl can resolve both local (@-prefixed) and remote (package://) deps
-    # without any network access.
-    all_pkl_project_digest = await path_globs_to_digest(
-        PathGlobs(["**/PklProject", "**/PklProject.deps.json", f"{PKL_PACKAGES_DIR}/**"])
+    # Include PklProject, PklProject.deps.json, and resolved PKL packages
+    # so pkl can resolve both local (@-prefixed) and remote (package://) deps.
+    pkl_project_digest = await path_globs_to_digest(
+        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    )
+    resolved_packages = await Get(PklResolvedPackages, PklResolvedPackagesRequest())
+    all_pkl_project_digest = await merge_digests(
+        MergeDigests((pkl_project_digest, resolved_packages.digest))
     )
 
     # 4. Merge all input digests.
