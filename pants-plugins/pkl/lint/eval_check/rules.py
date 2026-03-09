@@ -1,14 +1,20 @@
 """Rules for the PKL eval-check lint goal.
 
-Runs `pkl eval --format json -o /dev/null <source>` for each PKL source file
+Runs `pkl eval -x module -o /dev/null <source>` for each PKL source file
 and reports a lint failure if the exit code is non-zero.  This catches type
 errors, constraint violations, unresolved imports, and other evaluation-time
 errors.
 
-Using ``--format json`` (rather than the default PCF renderer) avoids the
-serialization error that occurs when the module outputs a ``Map`` or certain
-PKL-typed values that PCF cannot handle.  JSON can render ``Map`` values and
-most typed objects, while still propagating all real evaluation errors.
+Using ``-x module`` (expression mode) bypasses the output renderer entirely,
+avoiding two classes of false positives:
+
+* PCF cannot render ``Map`` values or certain PKL-typed objects.
+* JSON cannot render ``Class``-type values (e.g. ``fixed Type: Class = type``
+  in third-party packages such as formae).
+
+Despite skipping the renderer, ``-x module`` still forces full evaluation of
+the module, so all real errors (type mismatches, constraint violations,
+unresolved imports) are still caught.
 """
 
 from __future__ import annotations
@@ -116,11 +122,15 @@ async def pkl_eval_check(
     sandbox_snapshot = await digest_to_snapshot(input_digest)
 
     # Run one eval process per source file, all sharing the merged sandbox.
-    # `--format json -o /dev/null` evaluates the module and discards the output.
-    # JSON is used instead of the default PCF renderer because PCF cannot render
-    # Map values or certain PKL-typed objects.  JSON handles these cases while
-    # still propagating all real evaluation errors (type mismatches, constraint
-    # violations, unresolved imports, etc.).
+    # `-x module -o /dev/null` evaluates the full module object and discards output.
+    # Using `-x module` (expression mode) bypasses the output renderer entirely,
+    # which avoids two classes of false positives:
+    #   - PCF cannot render Map values or certain PKL-typed objects.
+    #   - JSON cannot render Class-type values (e.g. `fixed Type: Class = type`
+    #     in third-party packages like formae@0.82.1).
+    # Despite skipping the renderer, `-x module` still forces full evaluation:
+    # type mismatches, constraint violations, and import errors all produce
+    # a non-zero exit code as expected.
     results = await concurrently(
         execute_process(
             **implicitly(
@@ -131,7 +141,7 @@ async def pkl_eval_check(
                             "eval",
                             fs.source.file_path,
                             project_dir=fs.project_dir.value or detect_project_dir(fs.source.file_path, frozenset(sandbox_snapshot.files)),
-                            extra_args=(*pkl_eval_check_subsystem.args, "--format", "json", "-o", "/dev/null"),
+                            extra_args=(*pkl_eval_check_subsystem.args, "-x", "module", "-o", "/dev/null"),
                             # Enable cache so external package:// dependencies resolve from
                             # the vendored pkl-packages/ directory (no network required).
                             use_cache=True,
