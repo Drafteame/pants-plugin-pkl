@@ -12,6 +12,7 @@ Provides two binary resolution strategies controlled by ``[pkl].use_system_binar
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -23,6 +24,8 @@ from pants.core.util_rules.system_binaries import (
     BinaryPaths,
     find_binary,
 )
+from pants.core.util_rules.env_vars import environment_vars_subset
+from pants.engine.env_vars import EnvironmentVars, EnvironmentVarsRequest
 from pants.engine.fs import EMPTY_DIGEST, Digest
 from pants.engine.platform import Platform
 from pants.engine.rules import collect_rules, implicitly, rule
@@ -185,6 +188,35 @@ class PklTool(ExternalTool):
 # ---------------------------------------------------------------------------
 
 
+def _expand_search_path(
+    raw_search_path: tuple[str, ...] | list[str],
+    env_vars: EnvironmentVars,
+) -> tuple[str, ...]:
+    """Expand ``<PATH>`` sentinels in the search path using the real ``PATH`` env var.
+
+    ``BinaryPathRequest.search_path`` expects actual directory paths, not the
+    ``<PATH>`` sentinel.  This helper mirrors the expansion done by
+    ``ExecutableSearchPathsOptionMixin.executable_search_path`` in the Pants
+    core, but works with the ``EnvironmentVars`` obtained via the engine.
+    """
+    expanded: list[str] = []
+    for entry in raw_search_path:
+        if entry == "<PATH>":
+            path = env_vars.get("PATH", "")
+            if path:
+                expanded.extend(path.split(os.pathsep))
+        else:
+            expanded.append(entry)
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    result: list[str] = []
+    for p in expanded:
+        if p not in seen:
+            seen.add(p)
+            result.append(p)
+    return tuple(result)
+
+
 @rule(desc="Resolve pkl binary")
 async def resolve_pkl_binary(
     request: PklBinaryRequest,
@@ -193,10 +225,14 @@ async def resolve_pkl_binary(
 ) -> PklBinary:
     # --- Strategy 1: Try system binary ---
     if pkl_tool.use_system_binary:
+        # Expand <PATH> sentinels so BinaryPathRequest receives real directories.
+        env_vars = await environment_vars_subset(EnvironmentVarsRequest(("PATH",)), **implicitly())
+        resolved_search_path = _expand_search_path(pkl_tool.search_path, env_vars)
+
         binary_paths: BinaryPaths = await find_binary(
             BinaryPathRequest(
                 binary_name="pkl",
-                search_path=pkl_tool.search_path,
+                search_path=resolved_search_path,
                 # fingerprint_stdout=False gives us the raw stdout string
                 # (e.g. "Pkl 0.28.0 (Linux, Native)\n") instead of a SHA-256
                 # hash, so we can parse the version out of it.

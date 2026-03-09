@@ -6,10 +6,12 @@ import pytest
 
 from pkl.subsystem import (
     PklBinary,
+    _expand_search_path,
     _parse_pkl_version,
     _version_gte,
     _version_tuple,
 )
+from pants.engine.env_vars import EnvironmentVars
 from pants.engine.fs import EMPTY_DIGEST
 
 
@@ -136,3 +138,45 @@ class TestPklBinary:
         b = PklBinary(exe="pkl", digest=EMPTY_DIGEST, version="0.31.0", is_system=True)
         with pytest.raises(AttributeError):
             b.exe = "other"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# _expand_search_path
+# ---------------------------------------------------------------------------
+
+
+class TestExpandSearchPath:
+    def test_expands_path_sentinel(self):
+        env = EnvironmentVars({"PATH": "/usr/bin:/usr/local/bin"})
+        result = _expand_search_path(["<PATH>"], env)
+        assert result == ("/usr/bin", "/usr/local/bin")
+
+    def test_preserves_literal_paths(self):
+        env = EnvironmentVars({"PATH": "/usr/bin"})
+        result = _expand_search_path(["/opt/custom/bin", "<PATH>"], env)
+        assert result == ("/opt/custom/bin", "/usr/bin")
+
+    def test_deduplicates_preserving_order(self):
+        env = EnvironmentVars({"PATH": "/usr/bin:/opt/custom/bin:/usr/bin"})
+        result = _expand_search_path(["/opt/custom/bin", "<PATH>"], env)
+        assert result == ("/opt/custom/bin", "/usr/bin")
+
+    def test_empty_path_env(self):
+        env = EnvironmentVars({"PATH": ""})
+        result = _expand_search_path(["<PATH>"], env)
+        assert result == ()
+
+    def test_missing_path_env(self):
+        env = EnvironmentVars({})
+        result = _expand_search_path(["<PATH>"], env)
+        assert result == ()
+
+    def test_no_sentinels(self):
+        env = EnvironmentVars({"PATH": "/usr/bin"})
+        result = _expand_search_path(["/a", "/b"], env)
+        assert result == ("/a", "/b")
+
+    def test_mixed_sentinels_and_literals(self):
+        env = EnvironmentVars({"PATH": "/usr/bin:/usr/local/bin"})
+        result = _expand_search_path(["/opt/pkl", "<PATH>", "/extra"], env)
+        assert result == ("/opt/pkl", "/usr/bin", "/usr/local/bin", "/extra")

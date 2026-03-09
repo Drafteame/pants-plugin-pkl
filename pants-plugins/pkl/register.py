@@ -22,6 +22,7 @@ goal and lint backends depend on the target types defined here.
 """
 
 from pants.core.util_rules import system_binaries as _system_binaries
+from pants.core.util_rules import env_vars as _env_vars
 
 from pkl import dependency_inference as _dep_inference
 from pkl import pkl_dependencies as _pkl_dependencies
@@ -48,4 +49,5 @@ def rules():
         *_dep_inference.rules(),
         *_pkl_dependencies.rules(),
         *_system_binaries.rules(),
+        *_env_vars.rules(),
     ]
