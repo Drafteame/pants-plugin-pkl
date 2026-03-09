@@ -37,7 +37,7 @@ from pants.option.option_types import ArgsListOption, BoolOption, IntOption, Ski
 from pants.option.subsystem import Subsystem
 
 from pkl.pkl_dependencies import PklResolvedPackagesRequest, resolve_pkl_packages
-from pkl.pkl_process import build_pkl_argv
+from pkl.pkl_process import build_pkl_argv, detect_project_dir
 from pkl.subsystem import PklBinaryRequest, resolve_pkl_binary
 from pkl.target_types import (
     PklExtraArgsField,
@@ -157,6 +157,12 @@ async def run_pkl_test(
         )
     )
 
+    # 5b. Auto-detect project_dir if not explicitly set.
+    sandbox_snapshot = await digest_to_snapshot(input_digest)
+    effective_project_dir = field_set.project_dir.value or detect_project_dir(
+        source_path, frozenset(sandbox_snapshot.files)
+    )
+
     # 6. Build extra pre-positional flags.
     # All optional flags (--junit-reports, --overwrite) must appear BEFORE the
     # positional source-path argument.  We collect them into `pre_args` and pass
@@ -176,7 +182,7 @@ async def run_pkl_test(
         pkl_binary.exe,
         "test",
         source_path,
-        project_dir=field_set.project_dir.value,
+        project_dir=effective_project_dir,
         extra_args=tuple(pre_args),
         use_cache=True,
     )

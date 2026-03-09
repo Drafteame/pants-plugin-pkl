@@ -26,7 +26,7 @@ from urllib.parse import urlparse
 from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
 from pants.engine.addresses import Address
 from pants.engine.fs import MergeDigests, PathGlobs
-from pants.engine.intrinsics import execute_process, get_digest_contents, merge_digests, path_globs_to_digest
+from pants.engine.intrinsics import digest_to_snapshot, execute_process, get_digest_contents, merge_digests, path_globs_to_digest
 from pants.engine.process import Process
 from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import (
@@ -39,7 +39,7 @@ from pants.engine.target import (
 from pants.engine.unions import UnionRule
 
 from pkl.pkl_dependencies import PklResolvedPackagesRequest, resolve_pkl_packages
-from pkl.pkl_process import build_pkl_argv
+from pkl.pkl_process import build_pkl_argv, detect_project_dir
 from pkl.subsystem import PklBinaryRequest, resolve_pkl_binary
 from pkl.target_types import PklProjectDirField, PklSourceField, PklTestSourceField
 
@@ -300,13 +300,19 @@ async def infer_pkl_dependencies(
         MergeDigests((pkl_binary.digest, sources.snapshot.digest, all_pkl_project_digest))
     )
 
+    # Auto-detect project_dir if not explicitly set.
+    sandbox_snapshot = await digest_to_snapshot(input_digest)
+    effective_project_dir = field_set.project_dir.value or detect_project_dir(
+        source_file, frozenset(sandbox_snapshot.files)
+    )
+
     # Run `pkl analyze imports -f json <source>`.
     argv = build_pkl_argv(
         pkl_binary.exe,
         ("analyze", "imports"),
         "-f", "json",
         source_file,
-        project_dir=field_set.project_dir.value,
+        project_dir=effective_project_dir,
         use_cache=True,
     )
 
@@ -371,13 +377,19 @@ async def infer_pkl_test_dependencies(
         MergeDigests((pkl_binary.digest, sources.snapshot.digest, all_pkl_project_digest))
     )
 
+    # Auto-detect project_dir if not explicitly set.
+    sandbox_snapshot = await digest_to_snapshot(input_digest)
+    effective_project_dir = field_set.project_dir.value or detect_project_dir(
+        source_file, frozenset(sandbox_snapshot.files)
+    )
+
     # Run `pkl analyze imports -f json <source>`.
     argv = build_pkl_argv(
         pkl_binary.exe,
         ("analyze", "imports"),
         "-f", "json",
         source_file,
-        project_dir=field_set.project_dir.value,
+        project_dir=effective_project_dir,
         use_cache=True,
     )
 

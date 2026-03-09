@@ -1,8 +1,8 @@
-"""Pure unit tests for build_pkl_argv() — no RuleRunner required."""
+"""Pure unit tests for build_pkl_argv() and detect_project_dir() — no RuleRunner required."""
 
 import pytest
 
-from pkl.pkl_process import build_pkl_argv
+from pkl.pkl_process import build_pkl_argv, detect_project_dir
 
 
 class TestBuildPklArgvSimple:
@@ -19,8 +19,14 @@ class TestBuildPklArgvSimple:
         assert "--no-cache" in argv
         assert "--color" in argv
         assert "never" in argv
+        # --allowed-modules '.*' is passed to allow custom URI schemes
+        # (e.g. formae:, aws:) registered by PKL packages.
+        # PKL uses Java regex patterns; ".*" matches everything.
         assert "--allowed-modules" in argv
-        assert "--allowed-resources" in argv
+        idx = argv.index("--allowed-modules")
+        assert argv[idx + 1] == ".*"
+        # --allowed-resources is intentionally absent.
+        assert "--allowed-resources" not in argv
 
     def test_root_dir_always_present(self):
         argv = build_pkl_argv("pkl", "eval", "file.pkl")
@@ -39,6 +45,7 @@ class TestBuildPklArgvNoCommonFlags:
         argv = build_pkl_argv("pkl", "format", "--write", "file.pkl", include_common_flags=False)
         assert "--no-cache" not in argv
         assert "--color" not in argv
+        # --allowed-modules is part of the common flags block, so absent here.
         assert "--allowed-modules" not in argv
         assert "--allowed-resources" not in argv
 
@@ -143,3 +150,49 @@ class TestBuildPklArgvMultiplePositionalArgs:
         # Should still be a valid argv without files
         assert argv[0] == "pkl"
         assert argv[1] == "eval"
+
+
+# ---------------------------------------------------------------------------
+# detect_project_dir
+# ---------------------------------------------------------------------------
+
+
+class TestDetectProjectDir:
+    def test_finds_project_in_same_dir(self):
+        files = frozenset(["config/pkl/PklProject", "config/pkl/global.pkl"])
+        result = detect_project_dir("config/pkl/global.pkl", files)
+        assert result == "config/pkl"
+
+    def test_finds_project_in_parent_dir(self):
+        files = frozenset(["svc/PklProject", "svc/config/app/app.pkl"])
+        result = detect_project_dir("svc/config/app/app.pkl", files)
+        assert result == "svc"
+
+    def test_prefers_nearest_ancestor(self):
+        files = frozenset([
+            "svc/PklProject",
+            "svc/config/PklProject",
+            "svc/config/app.pkl",
+        ])
+        result = detect_project_dir("svc/config/app.pkl", files)
+        assert result == "svc/config"
+
+    def test_returns_none_when_no_project(self):
+        files = frozenset(["config/pkl/global.pkl"])
+        result = detect_project_dir("config/pkl/global.pkl", files)
+        assert result is None
+
+    def test_root_level_project(self):
+        files = frozenset(["PklProject", "app.pkl"])
+        result = detect_project_dir("app.pkl", files)
+        # Root-level PklProject means project_dir is ".", which we return as None
+        # so that --project-dir is not passed (pkl defaults to "." anyway).
+        assert result is None
+
+    def test_deeply_nested(self):
+        files = frozenset([
+            "a/b/PklProject",
+            "a/b/c/d/e/f.pkl",
+        ])
+        result = detect_project_dir("a/b/c/d/e/f.pkl", files)
+        assert result == "a/b"

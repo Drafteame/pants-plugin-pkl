@@ -31,7 +31,7 @@ from pants.engine.target import Dependencies, TransitiveTargetsRequest
 from pants.engine.unions import UnionRule
 
 from pkl.pkl_dependencies import PklResolvedPackagesRequest, resolve_pkl_packages
-from pkl.pkl_process import build_pkl_argv
+from pkl.pkl_process import build_pkl_argv, detect_project_dir
 from pkl.subsystem import PklBinaryRequest, resolve_pkl_binary
 from pkl.target_types import (
     PklExpressionField,
@@ -118,7 +118,13 @@ async def package_pkl(
         )
     )
 
-    # 5. Build extra args (shared between modes).
+    # 5. Auto-detect project_dir if not explicitly set.
+    sandbox_snapshot = await digest_to_snapshot(input_digest)
+    effective_project_dir = field_set.project_dir.value or detect_project_dir(
+        field_set.source.file_path, frozenset(sandbox_snapshot.files)
+    )
+
+    # 6. Build extra args (shared between modes).
     extra: list[str] = list(field_set.extra_args.value or ())
     if field_set.module_path.value:
         extra.extend(["--module-path", field_set.module_path.value])
@@ -136,7 +142,7 @@ async def package_pkl(
             pkl_binary.exe,
             "eval",
             source_path,
-            project_dir=field_set.project_dir.value,
+            project_dir=effective_project_dir,
             extra_args=tuple(extra),
             use_cache=True,
         )
@@ -176,7 +182,7 @@ async def package_pkl(
             pkl_binary.exe,
             "eval",
             source_path,
-            project_dir=field_set.project_dir.value,
+            project_dir=effective_project_dir,
             extra_args=tuple(extra),
             use_cache=True,
         )

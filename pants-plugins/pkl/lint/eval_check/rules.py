@@ -21,7 +21,7 @@ from pants.core.util_rules.source_files import SourceFilesRequest, determine_sou
 from pants.engine.fs import MergeDigests, PathGlobs
 from pants.engine.internals.selectors import concurrently
 from pants.engine.internals.graph import transitive_targets
-from pants.engine.intrinsics import execute_process, merge_digests, path_globs_to_digest
+from pants.engine.intrinsics import digest_to_snapshot, execute_process, merge_digests, path_globs_to_digest
 from pants.engine.process import Process
 from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import (
@@ -32,7 +32,7 @@ from pants.engine.target import (
 )
 from pkl.lint.eval_check.subsystem import PklEvalCheck
 from pkl.pkl_dependencies import PklResolvedPackagesRequest, resolve_pkl_packages
-from pkl.pkl_process import build_pkl_argv
+from pkl.pkl_process import build_pkl_argv, detect_project_dir
 from pkl.subsystem import PklBinaryRequest, resolve_pkl_binary
 from pkl.target_types import PklProjectDirField, PklSkipEvalCheckField, PklSourceField
 
@@ -112,6 +112,9 @@ async def pkl_eval_check(
         )
     )
 
+    # Build a snapshot so detect_project_dir can walk the sandbox file tree.
+    sandbox_snapshot = await digest_to_snapshot(input_digest)
+
     # Run one eval process per source file, all sharing the merged sandbox.
     # `--format json -o /dev/null` evaluates the module and discards the output.
     # JSON is used instead of the default PCF renderer because PCF cannot render
@@ -127,7 +130,7 @@ async def pkl_eval_check(
                             pkl_binary.exe,
                             "eval",
                             fs.source.file_path,
-                            project_dir=fs.project_dir.value,
+                            project_dir=fs.project_dir.value or detect_project_dir(fs.source.file_path, frozenset(sandbox_snapshot.files)),
                             extra_args=(*pkl_eval_check_subsystem.args, "--format", "json", "-o", "/dev/null"),
                             # Enable cache so external package:// dependencies resolve from
                             # the vendored pkl-packages/ directory (no network required).
