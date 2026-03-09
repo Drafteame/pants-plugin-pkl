@@ -47,7 +47,7 @@ def _run_fmt(
 ) -> FmtResult:
     """Write files, build a batch, and request FmtResult."""
     rule_runner.write_files(files)
-    rule_runner.set_options([], env_inherit={"PATH", "PYENV_ROOT", "HOME"})
+    rule_runner.set_options(["--pkl-use-system-binary=False"], env_inherit={"PATH", "PYENV_ROOT", "HOME"})
 
     all_targets = rule_runner.request(AllTargets, [])
     field_sets = tuple(

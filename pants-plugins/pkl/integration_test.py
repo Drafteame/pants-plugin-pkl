@@ -306,7 +306,7 @@ class TestFormatter:
     def test_well_formatted_files_unchanged(self, rule_runner: RuleRunner) -> None:
         """config.pkl, lib.pkl, and main.pkl are all well-formatted — no changes expected."""
         _write_mini_project(rule_runner)
-        rule_runner.set_options([], env_inherit={"PATH", "PYENV_ROOT", "HOME"})
+        rule_runner.set_options(["--pkl-use-system-binary=False"], env_inherit={"PATH", "PYENV_ROOT", "HOME"})
 
         all_targets = rule_runner.request(AllTargets, [])
         field_sets = tuple(
@@ -330,7 +330,7 @@ class TestFormatter:
                 "messy/messy.pkl": 'name="hello"\nage=30\n',
             }
         )
-        rule_runner.set_options([], env_inherit={"PATH", "PYENV_ROOT", "HOME"})
+        rule_runner.set_options(["--pkl-use-system-binary=False"], env_inherit={"PATH", "PYENV_ROOT", "HOME"})
 
         all_targets = rule_runner.request(AllTargets, [])
         field_sets = tuple(
