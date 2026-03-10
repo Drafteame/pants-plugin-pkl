@@ -1,0 +1,95 @@
+name: Service Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  bump_version:
+    runs-on: ubuntu-24.04
+    name: "Bump version"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: "${{ secrets.ACCESS_TOKEN }}"
+          ref: "main"
+
+      - name: Validate last commit is not a bump
+        id: validate_last_commit
+        run: |
+          LAST_COMMIT_MSG=$(git log -1 --pretty=%B)
+          release=true
+          if [[ $LAST_COMMIT_MSG == bump:* ]]; then
+            release=false
+          fi
+          echo "release=$release" >> $GITHUB_OUTPUT
+
+      - id: cz
+        name: Create bump and changelog
+        if: steps.validate_last_commit.outputs.release == 'true'
+        uses: commitizen-tools/commitizen-action@0.27.1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: "main"
+          git_name: ${{ secrets.GIT_NAME }}
+          git_email: ${{ secrets.GIT_EMAIL }}
+          changelog_increment_filename: body.md
+
+      - name: Print Version
+        if: steps.validate_last_commit.outputs.release == 'true'
+        run: echo "Bumped to version v${{ env.REVISION }}"
+
+      - name: Trim body to 125000 characters
+        if: steps.validate_last_commit.outputs.release == 'true'
+        run: |
+          if [ $(wc -c < body.md) -gt 125000 ]; then
+            head -c 125000 body.md > body.md
+          fi
+
+      - name: Release
+        if: steps.validate_last_commit.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: "body.md"
+          tag_name: v${{ env.REVISION }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          make_latest: "true"
+
+  build:
+    name: Build distribution
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build
+        run: pip install build
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: pypi
+    permissions:
+      id-token: write  # required for OIDC trusted publishing
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

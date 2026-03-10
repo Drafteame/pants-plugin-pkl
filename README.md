@@ -1,6 +1,29 @@
 # pants-plugin-pkl
 
+[![PyPI](https://img.shields.io/pypi/v/pants-plugin-pkl)](https://pypi.org/project/pants-plugin-pkl/)
+
 A [Pants](https://www.pantsbuild.org) plugin for the [PKL configuration language](https://pkl-lang.org). It brings PKL files into the Pants build graph, enabling `pants test`, `pants fmt`, `pants lint`, `pants package`, `pants tailor`, and automatic dependency inference for `.pkl` files.
+
+## Installation
+
+Add `pants-plugin-pkl` to your `pants-plugins` resolve:
+
+```python
+# pants-plugins/BUILD
+python_requirement(
+    name = "pants-plugin-pkl",
+    requirements = ["pants-plugin-pkl==1.0.0"],
+    resolve = "pants-plugins",
+)
+```
+
+Then regenerate the lockfile:
+
+```bash
+pants generate-lockfiles --resolve=pants-plugins
+```
+
+Then configure `pants.toml` as shown in [Quick start](#quick-start).
 
 ## What this plugin does
 
