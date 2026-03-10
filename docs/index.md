@@ -175,8 +175,8 @@ Every goal follows the same pattern:
 
 4. **Build argv and execute** — `build_pkl_argv()` constructs the pkl CLI
    invocation with sandbox containment flags (`--root-dir .`, `--no-cache`,
-   `--color never`, `--allowed-modules`, `--allowed-resources`). The process
-   runs in the Pants sandbox.
+   `--color never`, `--allowed-modules .*`). The process runs in the Pants
+   sandbox.
 
 ### Rule graph (call-by-name)
 
@@ -203,12 +203,10 @@ All pkl processes run with restricted permissions:
 | `--root-dir .` | Restricts file access to the sandbox root |
 | `--no-cache` | Prevents reading/writing `~/.pkl/cache` (except when `use_cache=True`) |
 | `--color never` | Suppresses ANSI escape codes in captured output |
-| `--allowed-modules pkl:,file:,modulepath:,projectpackage:,repl:` | Blocks `https:` module imports |
-| `--allowed-resources env:,prop:,projectpackage:` | Restricts resource access (adds `https:` when cache is enabled) |
+| `--allowed-modules .*` | Allows any module URI scheme (Java regex `.*` matches all). Needed so that custom schemes registered by packages (e.g. `formae:`, `aws:`) are not blocked. File-system isolation is already enforced by `--root-dir .` |
 
 When `use_cache=True` (eval-check, test, package, dependency inference), the
-`--cache-dir pkl-packages` flag is used instead of `--no-cache`, and `https:`
-is added to `--allowed-resources` so PKL can validate package checksums.
+`--cache-dir pkl-packages` flag is used instead of `--no-cache`.
 
 `pkl format` does **not** accept any of these flags — it only supports `--write`,
 `--diff-name-only`, `--silent`, and `--grammar-version`.
@@ -443,11 +441,18 @@ pants lint --only=pkl-eval-check src::   # eval-check only
 pants lint --only=pkl-fmt src::          # format check only
 ```
 
-The eval-check runs `pkl eval --format json -o /dev/null <source>`. JSON format
-is used instead of the default PCF renderer because PCF cannot serialize `Map`
-values or certain PKL-typed objects. JSON handles these cases while still
-propagating all real evaluation errors (type mismatches, constraint violations,
-unresolved imports, etc.).
+The eval-check runs `pkl eval -x module -o /dev/null <source>`. Using
+`-x module` (expression mode) evaluates the full module object without
+invoking the output renderer at all. This avoids two classes of false
+positives that renderer-based approaches suffer from:
+
+- PCF cannot serialize `Map` values or certain PKL-typed objects.
+- JSON cannot serialize `Class`-type values (e.g. `fixed Type: Class = type`
+  in third-party packages such as formae).
+
+Despite bypassing the renderer, `-x module` still forces full evaluation, so
+all real errors (type mismatches, constraint violations, unresolved imports)
+produce a non-zero exit code as expected.
 
 Targets with `skip_eval_check=True` are excluded.
 
@@ -639,12 +644,21 @@ The plugin expects schema version 1:
 This file contains the full transitive dependency closure — no recursive
 resolution is needed. Generate it with `pkl project resolve`.
 
-### Setting `project_dir`
+### Auto-detection of `project_dir`
 
-When `PklProject` is not in the same directory as the source files, set
-`project_dir` on your targets:
+The plugin automatically detects the nearest `PklProject` for each source file
+by walking up its directory tree inside the sandbox — the same algorithm PKL
+itself uses. If a `PklProject` is found in an ancestor directory, it is passed
+as `--project-dir` automatically; no manual configuration is needed in the
+common case.
+
+Manual `project_dir` is only required when:
+- The `PklProject` lives **outside** the source file's ancestor tree, or
+- You need to override the auto-detected value for a specific target.
 
 ```python
+# Typically not needed — auto-detected from the sandbox file tree.
+# Set explicitly only when auto-detection cannot reach the PklProject.
 pkl_sources(
     project_dir = "config/pkl",
 )
@@ -712,18 +726,20 @@ The version parser handles all known PKL version output formats:
 The plugin only provides download checksums for macOS and Linux. Windows is not
 supported.
 
-### `<PATH>` expansion in Nix environments
+### `<PATH>` expansion
 
-The default `search_path = ["<PATH>"]` expands to the `$PATH` visible to the
-Pants process. In Nix-based environments, Pants' execution environment may not
-include nix-profile paths. Workaround:
+The default `search_path = ["<PATH>"]` is resolved by reading the `PATH`
+environment variable at rule execution time and expanding it to real directory
+paths before the binary search. This works correctly in Nix-based environments
+and other setups where the pkl binary is on `$PATH`.
+
+If the system binary is not found despite being on `$PATH`, set `search_path`
+explicitly or set `use_system_binary = false` to skip system detection:
 
 ```toml
 [pkl]
 search_path = ["/Users/<you>/.nix-profile/bin", "<PATH>"]
 ```
-
-Or set `use_system_binary = false` to bypass system detection entirely.
 
 ### `pkl format` requires PKL >= 0.30.0
 
@@ -803,11 +819,14 @@ version output matches the expected format (`Pkl X.Y.Z ...`).
 
 In Nix environments, set `[pkl].search_path` explicitly (see Limitations).
 
-### Eval-check fails with serialization error
+### Eval-check fails with a PKL error
 
-The eval-check uses `--format json` to avoid PCF serialization issues with `Map`
-values. If you still see serialization errors, it may be a genuine type error in
-your PKL module. Check the stderr output for details.
+The eval-check runs `pkl eval -x module -o /dev/null` which bypasses the output
+renderer entirely, so serialization errors (PCF `Map` issues, JSON `Class`-type
+values from third-party packages) are not expected. If you see a PKL error it is
+a genuine evaluation error — type mismatch, constraint violation, unresolved
+import, or missing `PklProject`. Check the stderr output for the exact location
+and message.
 
 ### Dependency inference misses an import
 
