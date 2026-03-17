@@ -1,0 +1,62 @@
+name: Test Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to publish to TestPyPI"
+        required: true
+        default: "main"
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.branch }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build
+        run: pip install build
+
+      - name: Set dev version
+        run: |
+          CURRENT_VERSION=$(python -c "import tomllib; f=open('pyproject.toml','rb'); d=tomllib.load(f); print(d['project']['version'])")
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          sed -i "s/^version = .*/version = \"$CURRENT_VERSION.dev$TIMESTAMP\"/" pyproject.toml
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      - name: Store distribution packages
+        uses: actions/upload-artifact@v6
+        with:
+          name: pants-plugin-pkl-test
+          path: dist/
+
+  publish-to-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/pants-plugin-pkl
+    permissions:
+      id-token: write
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: pants-plugin-pkl-test
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

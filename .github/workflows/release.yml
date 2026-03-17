@@ -2,34 +2,24 @@ name: Service Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
 jobs:
   bump_version:
     runs-on: ubuntu-24.04
     name: "Bump version"
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: "${{ secrets.ACCESS_TOKEN }}"
+          token: "${{ secrets.GITHUB_TOKEN }}"
           ref: "main"
-
-      - name: Validate last commit is not a bump
-        id: validate_last_commit
-        run: |
-          LAST_COMMIT_MSG=$(git log -1 --pretty=%B)
-          release=true
-          if [[ $LAST_COMMIT_MSG == bump:* ]]; then
-            release=false
-          fi
-          echo "release=$release" >> $GITHUB_OUTPUT
 
       - id: cz
         name: Create bump and changelog
-        if: steps.validate_last_commit.outputs.release == 'true'
         uses: commitizen-tools/commitizen-action@0.27.1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -39,18 +29,15 @@ jobs:
           changelog_increment_filename: body.md
 
       - name: Print Version
-        if: steps.validate_last_commit.outputs.release == 'true'
         run: echo "Bumped to version v${{ env.REVISION }}"
 
       - name: Trim body to 125000 characters
-        if: steps.validate_last_commit.outputs.release == 'true'
         run: |
           if [ $(wc -c < body.md) -gt 125000 ]; then
             head -c 125000 body.md > body.md
           fi
 
       - name: Release
-        if: steps.validate_last_commit.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           body_path: "body.md"
@@ -61,6 +48,7 @@ jobs:
   build:
     name: Build distribution
     runs-on: ubuntu-24.04
+    needs: bump_version
     steps:
       - uses: actions/checkout@v6
 
@@ -74,22 +62,27 @@ jobs:
       - name: Build wheel and sdist
         run: python -m build
 
-      - uses: actions/upload-artifact@v6
+      - name: Store distribution packages
+        uses: actions/upload-artifact@v6
         with:
-          name: dist
+          name: pants-plugin-pkl
           path: dist/
 
-  publish:
+  publish-to-pypi:
     name: Publish to PyPI
     needs: build
     runs-on: ubuntu-24.04
-    environment: pypi
+    environment: 
+      name: pypi
+      url: https://pypi.org/p/pants-plugin-pkl
     permissions:
-      id-token: write  # required for OIDC trusted publishing
+      id-token: write
     steps:
-      - uses: actions/download-artifact@v6
+      - name: Download pants-plugin-pkl artifact
+        uses: actions/download-artifact@v6
         with:
-          name: dist
+          name: pants-plugin-pkl
           path: dist/
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
