@@ -1,3 +1,10 @@
+## v0.3.0 (2026-03-23)
+
+
+- Merge pull request #4 from Drafteame/feat/pkl-package-env-vars
+- feat: add env_vars field to pkl_package target
+- feat: add env_vars field to pkl_package target
+
 ## v0.2.0 (2026-03-23)
 
 
