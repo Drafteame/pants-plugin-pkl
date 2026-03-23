@@ -1,3 +1,13 @@
+## v0.2.0 (2026-03-23)
+
+
+- Merge pull request #2 from Drafteame/chore/remove-pantsbuild-dependency
+- chore: remove pantsbuild.pants runtime dependency
+- Merge pull request #3 from Drafteame/chore/pkl-alias-dependency-infernce
+- feat: add alias import resolution for PKL project dependencies
+- feat: add alias import resolution for PKL project dependencies
+- chore: remove pantsbuild.pants runtime dependency
+
 ## v0.1.0 (2026-03-17)
 
 
