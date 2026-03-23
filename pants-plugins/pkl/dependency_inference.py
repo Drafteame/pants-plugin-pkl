@@ -13,6 +13,18 @@ targets (``pkl_source`` and ``pkl_test``) to produce ``Address`` values.
 Dep inference is registered for both ``PklSourceField`` and
 ``PklTestSourceField`` so that test modules that import shared library modules
 have their dependencies inferred correctly.
+
+Alias import support (``@alias/...``):
+    PKL supports project-scoped dependencies declared in a ``PklProject`` file.
+    An import like ``import "@baseconfig/global.pkl"`` uses an alias defined in::
+
+        dependencies {
+          ["baseconfig"] = import("../../../../config/pkl/PklProject")
+        }
+
+    This module reads the nearest ``PklProject`` to build an *alias map*
+    (``{alias: repo-relative-dep-dir}``) and uses it to resolve these imports
+    to concrete source file paths.
 """
 
 from __future__ import annotations
@@ -44,7 +56,7 @@ from pkl.subsystem import PklBinaryRequest, resolve_pkl_binary
 from pkl.target_types import PklProjectDirField, PklSourceField, PklTestSourceField
 
 # ---------------------------------------------------------------------------
-# Regex fallback parser
+# Regex patterns
 # ---------------------------------------------------------------------------
 
 #: Matches PKL import-like statements: ``import``, ``import*``, ``amends``,
@@ -54,17 +66,168 @@ PKL_IMPORT_RE = re.compile(
     re.MULTILINE,
 )
 
+#: Matches local dependency declarations in PklProject files::
+#:
+#:     ["alias"] = import("../relative/path/PklProject")
+#:
+#: Allows optional whitespace inside the ``import(...)`` call.
+_PKL_PROJECT_LOCAL_DEP_RE = re.compile(
+    r'\["([^"]+)"\]\s*=\s*import\(\s*"([^"]+)"\s*\)',
+    re.MULTILINE,
+)
+
 #: URI schemes that do NOT correspond to local files and should be ignored.
 _IGNORED_SCHEMES = frozenset({"pkl", "package", "https", "http", "modulepath", "projectpackage"})
 
 
-def _extract_local_paths_from_regex(source_text: str, source_file: str) -> list[str]:
+# ---------------------------------------------------------------------------
+# Path helpers
+# ---------------------------------------------------------------------------
+
+
+def _normalize_path(path: str) -> str:
+    """Normalize a POSIX path by resolving ``..`` and ``.`` segments.
+
+    ``PurePosixPath`` does not collapse ``..`` components; this function
+    replicates the behaviour of ``os.path.normpath`` for POSIX paths without
+    touching the filesystem.
+
+    Args:
+        path: A POSIX-style path, potentially containing ``..`` or ``.``.
+
+    Returns:
+        The normalized path with ``..`` and ``.`` resolved.
+    """
+    parts = path.split("/")
+    result: list[str] = []
+    for part in parts:
+        if part == "..":
+            if result:
+                result.pop()
+        elif part and part != ".":
+            result.append(part)
+    return "/".join(result)
+
+
+# ---------------------------------------------------------------------------
+# PKL project alias map
+# ---------------------------------------------------------------------------
+
+
+def _parse_pkl_project_local_deps(content: str, project_dir: str) -> dict[str, str]:
+    """Parse a ``PklProject`` file and return ``{alias: repo-relative-dep-dir}``.
+
+    Handles local dependency declarations of the form::
+
+        dependencies {
+          ["baseconfig"] = import("../../../../config/pkl/PklProject")
+        }
+
+    The returned value maps each alias to the normalised repo-relative
+    directory that contains the dependency's own ``PklProject`` file.
+    For the example above (with ``project_dir="services/app/config"``):
+
+        ``{"baseconfig": "config/pkl"}``
+
+    Remote dependencies (using ``{ uri = "package://..." }`` syntax) are
+    silently ignored — Pants resolves them via :mod:`pkl.pkl_dependencies`.
+
+    Args:
+        content: Raw text content of the ``PklProject`` file.
+        project_dir: Repo-relative directory containing this ``PklProject``
+            (used to resolve the relative import paths inside the file).
+
+    Returns:
+        Mapping from alias name to the normalized repo-relative directory of
+        the local dependency.
+    """
+    result: dict[str, str] = {}
+    for m in _PKL_PROJECT_LOCAL_DEP_RE.finditer(content):
+        alias = m.group(1)
+        import_path = m.group(2)  # e.g. "../../../../config/pkl/PklProject"
+
+        # Resolve the import path relative to the project_dir, then take the
+        # parent directory (stripping the "PklProject" filename component).
+        if project_dir:
+            combined = f"{project_dir}/{import_path}"
+        else:
+            combined = import_path
+
+        dep_dir = _normalize_path(str(PurePosixPath(combined).parent))
+        result[alias] = dep_dir
+
+    return result
+
+
+def _resolve_projectpackage_uri(uri: str, alias_map: dict[str, str]) -> str | None:
+    """Resolve a ``projectpackage://`` URI to a repo-relative file path.
+
+    ``pkl analyze imports -f json`` emits ``projectpackage://`` URIs for
+    imports that reference a project dependency alias, e.g.::
+
+        projectpackage://localhost:0/baseconfig@1.0.0#/global.pkl
+
+    Given an alias map derived from the source file's ``PklProject``::
+
+        {"baseconfig": "config/pkl"}
+
+    …this function returns ``"config/pkl/global.pkl"``.
+
+    Args:
+        uri: A ``projectpackage://`` URI from ``pkl analyze imports`` output.
+        alias_map: Mapping from package name → repo-relative source directory.
+
+    Returns:
+        Normalised repo-relative path, or ``None`` if the URI cannot be
+        resolved via the alias map.
+    """
+    if not uri.startswith("projectpackage://"):
+        return None
+    if "#" not in uri:
+        return None
+
+    base, fragment = uri.split("#", 1)
+    file_path = fragment.lstrip("/")  # "global.pkl"
+    if not file_path:
+        return None
+
+    # base = "projectpackage://localhost:0/baseconfig@1.0.0"
+    # Strip the scheme prefix to isolate "localhost:0/baseconfig@1.0.0".
+    after_scheme = base[len("projectpackage://"):]
+    if "/" not in after_scheme:
+        return None
+
+    # Drop the host:port component; pkg_path = "baseconfig@1.0.0"
+    # (or "namespace/subname@1.0.0" for namespaced packages).
+    _, pkg_path = after_scheme.split("/", 1)
+    # Take the last path segment and strip the version suffix.
+    pkg_name = pkg_path.split("@")[0].rsplit("/", 1)[-1]
+
+    if pkg_name not in alias_map:
+        return None
+
+    return _normalize_path(f"{alias_map[pkg_name]}/{file_path}")
+
+
+# ---------------------------------------------------------------------------
+# Regex fallback parser
+# ---------------------------------------------------------------------------
+
+
+def _extract_local_paths_from_regex(
+    source_text: str,
+    source_file: str,
+    alias_map: dict[str, str] | None = None,
+) -> list[str]:
     """Return sandbox-relative paths implied by the source text using the regex fallback.
 
     Args:
         source_text: Raw PKL source text.
         source_file: Sandbox-relative path of the source file being analysed
             (used to resolve relative imports).
+        alias_map: Optional mapping from project alias to repo-relative dep
+            directory.  Required to resolve ``@alias/...`` imports; when
+            ``None`` those imports are silently skipped.
 
     Returns:
         List of sandbox-relative paths for *local* imports only.
@@ -73,6 +236,22 @@ def _extract_local_paths_from_regex(source_text: str, source_file: str) -> list[
     paths: list[str] = []
     for m in PKL_IMPORT_RE.finditer(source_text):
         uri = m.group(1)
+
+        # ------------------------------------------------------------------
+        # @alias/... imports (PKL project dependency aliases)
+        # ------------------------------------------------------------------
+        if uri.startswith("@"):
+            if alias_map:
+                slash_pos = uri.find("/", 1)
+                if slash_pos != -1:
+                    alias = uri[1:slash_pos]
+                    file_path = uri[slash_pos + 1:]
+                    if alias in alias_map and file_path:
+                        paths.append(_normalize_path(f"{alias_map[alias]}/{file_path}"))
+            # @alias/... is never a repo-relative path — skip regardless of
+            # whether we resolved it.
+            continue
+
         parsed = urlparse(uri)
         # Skip URIs with a known non-local scheme.
         if parsed.scheme in _IGNORED_SCHEMES:
@@ -87,15 +266,7 @@ def _extract_local_paths_from_regex(source_text: str, source_file: str) -> list[
         resolved = str(PurePosixPath(source_dir) / uri)
         # Normalize away ".." components using os.path.normpath-style logic.
         # PurePosixPath does NOT resolve ".." — we must do it manually.
-        parts = resolved.split("/")
-        normalized: list[str] = []
-        for part in parts:
-            if part == "..":
-                if normalized:
-                    normalized.pop()
-            elif part and part != ".":
-                normalized.append(part)
-        resolved = "/".join(normalized)
+        resolved = _normalize_path(resolved)
         paths.append(resolved)
     return paths
 
@@ -105,7 +276,11 @@ def _extract_local_paths_from_regex(source_text: str, source_file: str) -> list[
 # ---------------------------------------------------------------------------
 
 
-def _parse_analyze_output(json_bytes: bytes, source_file: str) -> list[str]:
+def _parse_analyze_output(
+    json_bytes: bytes,
+    source_file: str,
+    alias_map: dict[str, str] | None = None,
+) -> list[str]:
     """Parse ``pkl analyze imports -f json`` output into sandbox-relative import paths.
 
     The JSON format is::
@@ -113,10 +288,14 @@ def _parse_analyze_output(json_bytes: bytes, source_file: str) -> list[str]:
         {
           "imports": {
             "file:///abs/path/to/source.pkl": [
-              {"uri": "file:///abs/path/to/dep.pkl"}
+              {"uri": "file:///abs/path/to/dep.pkl"},
+              {"uri": "projectpackage://localhost:0/baseconfig@1.0.0#/global.pkl"}
             ]
           }
         }
+
+    ``file://`` entries are converted to relative paths as before.
+    ``projectpackage://`` entries are resolved via *alias_map* when provided.
 
     We locate the entry whose key ends with ``source_file`` and return the
     relative paths of its direct imports.
@@ -124,6 +303,8 @@ def _parse_analyze_output(json_bytes: bytes, source_file: str) -> list[str]:
     Args:
         json_bytes: Raw stdout from ``pkl analyze imports -f json``.
         source_file: Sandbox-relative path of the file whose deps we want.
+        alias_map: Optional mapping from package alias to repo-relative source
+            directory, used to resolve ``projectpackage://`` import URIs.
 
     Returns:
         List of sandbox-relative paths (best-effort) for direct imports.
@@ -154,13 +335,17 @@ def _parse_analyze_output(json_bytes: bytes, source_file: str) -> list[str]:
     for dep in source_deps:
         dep_uri = dep.get("uri", "")
         parsed = urlparse(dep_uri)
-        if parsed.scheme != "file":
-            continue
-        abs_path = parsed.path  # /private/var/folders/.../subdir/dep.pkl
-        # Keep only the portion starting from source_stem's directory or just
-        # use the last N components.  We look for the longest suffix that ends
-        # in a .pkl file and try to match against known targets below.
-        paths.append(abs_path.lstrip("/"))
+        if parsed.scheme == "file":
+            abs_path = parsed.path  # /private/var/folders/.../subdir/dep.pkl
+            # Keep only the portion starting from source_stem's directory or just
+            # use the last N components.  We look for the longest suffix that ends
+            # in a .pkl file and try to match against known targets below.
+            paths.append(abs_path.lstrip("/"))
+        elif parsed.scheme == "projectpackage" and alias_map:
+            # Local project dependency alias — resolve via alias map.
+            resolved = _resolve_projectpackage_uri(dep_uri, alias_map)
+            if resolved:
+                paths.append(resolved)
 
     return paths
 
@@ -264,6 +449,104 @@ def _resolve_import_addresses(
 
 
 # ---------------------------------------------------------------------------
+# Shared async inference helper
+# ---------------------------------------------------------------------------
+
+
+async def _run_pkl_inference(
+    source_field,
+    project_dir_field,
+    all_targets: AllTargets,
+) -> InferredDependencies:
+    """Core inference logic shared by source and test rules.
+
+    Runs ``pkl analyze imports -f json``, falling back to regex if the command
+    fails.  Both strategies now honour ``@alias/...`` imports via the
+    ``PklProject`` alias map.
+    """
+    # Resolve the pkl binary (system or downloaded).
+    pkl_binary = await resolve_pkl_binary(PklBinaryRequest())
+
+    # Get the source file.
+    sources = await determine_source_files(SourceFilesRequest([source_field]))
+    if not sources.snapshot.files:
+        return InferredDependencies([])
+
+    source_file = sources.snapshot.files[0]
+
+    # Include PklProject, PklProject.deps.json, and resolved PKL packages so
+    # `pkl analyze imports` can resolve both local and remote package:// deps.
+    pkl_project_digest = await path_globs_to_digest(
+        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    )
+    resolved_packages = await resolve_pkl_packages(PklResolvedPackagesRequest())
+    all_pkl_project_digest = await merge_digests(
+        MergeDigests((pkl_project_digest, resolved_packages.digest))
+    )
+
+    # Merge binary + source + PklProject files into sandbox.
+    input_digest = await merge_digests(
+        MergeDigests((pkl_binary.digest, sources.snapshot.digest, all_pkl_project_digest))
+    )
+
+    # Auto-detect project_dir if not explicitly set.
+    sandbox_snapshot = await digest_to_snapshot(input_digest)
+    effective_project_dir = project_dir_field.value or detect_project_dir(
+        source_file, frozenset(sandbox_snapshot.files)
+    )
+
+    # Build the alias map from the nearest PklProject so that @alias/... imports
+    # can be resolved to repo-relative file paths.
+    alias_map: dict[str, str] = {}
+    if effective_project_dir:
+        pkl_project_contents = await get_digest_contents(pkl_project_digest)
+        project_file_path = f"{effective_project_dir}/PklProject"
+        for fc in pkl_project_contents:
+            if fc.path == project_file_path:
+                content = fc.content.decode(errors="replace")
+                alias_map = _parse_pkl_project_local_deps(content, effective_project_dir)
+                break
+
+    # Run `pkl analyze imports -f json <source>`.
+    argv = build_pkl_argv(
+        pkl_binary.exe,
+        ("analyze", "imports"),
+        "-f", "json",
+        source_file,
+        project_dir=effective_project_dir,
+        use_cache=True,
+    )
+
+    result = await execute_process(
+        **implicitly(
+            Process(
+                argv=tuple(argv),
+                input_digest=input_digest,
+                description=f"Analyze PKL imports for {source_file}",
+            )
+        )
+    )
+
+    # Choose parsing strategy based on process success.
+    if result.exit_code == 0 and result.stdout:
+        import_paths = _parse_analyze_output(result.stdout, source_file, alias_map=alias_map)
+    else:
+        # Fallback: regex over the source text.
+        digest_contents = await get_digest_contents(sources.snapshot.digest)
+        source_text = ""
+        for fc in digest_contents:
+            if fc.path == source_file:
+                source_text = fc.content.decode(errors="replace")
+                break
+        import_paths = _extract_local_paths_from_regex(source_text, source_file, alias_map=alias_map)
+
+    if not import_paths:
+        return InferredDependencies([])
+
+    return InferredDependencies(_resolve_import_addresses(import_paths, all_targets))
+
+
+# ---------------------------------------------------------------------------
 # Inference rules
 # ---------------------------------------------------------------------------
 
@@ -273,76 +556,11 @@ async def infer_pkl_dependencies(
     request: InferPklDependenciesRequest,
     all_targets: AllTargets,
 ) -> InferredDependencies:
-    field_set = request.field_set
-
-    # Resolve the pkl binary (system or downloaded).
-    pkl_binary = await resolve_pkl_binary(PklBinaryRequest())
-
-    # Get the source file.
-    sources = await determine_source_files(SourceFilesRequest([field_set.source]))
-    if not sources.snapshot.files:
-        return InferredDependencies([])
-
-    source_file = sources.snapshot.files[0]
-
-    # Include PklProject, PklProject.deps.json, and resolved PKL packages so
-    # `pkl analyze imports` can resolve both local and remote package:// deps.
-    pkl_project_digest = await path_globs_to_digest(
-        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    return await _run_pkl_inference(
+        request.field_set.source,
+        request.field_set.project_dir,
+        all_targets,
     )
-    resolved_packages = await resolve_pkl_packages(PklResolvedPackagesRequest())
-    all_pkl_project_digest = await merge_digests(
-        MergeDigests((pkl_project_digest, resolved_packages.digest))
-    )
-
-    # Merge binary + source + PklProject files into sandbox.
-    input_digest = await merge_digests(
-        MergeDigests((pkl_binary.digest, sources.snapshot.digest, all_pkl_project_digest))
-    )
-
-    # Auto-detect project_dir if not explicitly set.
-    sandbox_snapshot = await digest_to_snapshot(input_digest)
-    effective_project_dir = field_set.project_dir.value or detect_project_dir(
-        source_file, frozenset(sandbox_snapshot.files)
-    )
-
-    # Run `pkl analyze imports -f json <source>`.
-    argv = build_pkl_argv(
-        pkl_binary.exe,
-        ("analyze", "imports"),
-        "-f", "json",
-        source_file,
-        project_dir=effective_project_dir,
-        use_cache=True,
-    )
-
-    result = await execute_process(
-        **implicitly(
-            Process(
-                argv=tuple(argv),
-                input_digest=input_digest,
-                description=f"Analyze PKL imports for {source_file}",
-            )
-        )
-    )
-
-    # Choose parsing strategy based on process success.
-    if result.exit_code == 0 and result.stdout:
-        import_paths = _parse_analyze_output(result.stdout, source_file)
-    else:
-        # Fallback: regex over the source text.
-        digest_contents = await get_digest_contents(sources.snapshot.digest)
-        source_text = ""
-        for fc in digest_contents:
-            if fc.path == source_file:
-                source_text = fc.content.decode(errors="replace")
-                break
-        import_paths = _extract_local_paths_from_regex(source_text, source_file)
-
-    if not import_paths:
-        return InferredDependencies([])
-
-    return InferredDependencies(_resolve_import_addresses(import_paths, all_targets))
 
 
 @rule(desc="Infer PKL test dependencies via pkl analyze imports")
@@ -350,76 +568,11 @@ async def infer_pkl_test_dependencies(
     request: InferPklTestDependenciesRequest,
     all_targets: AllTargets,
 ) -> InferredDependencies:
-    field_set = request.field_set
-
-    # Resolve the pkl binary (system or downloaded).
-    pkl_binary = await resolve_pkl_binary(PklBinaryRequest())
-
-    # Get the source file.
-    sources = await determine_source_files(SourceFilesRequest([field_set.source]))
-    if not sources.snapshot.files:
-        return InferredDependencies([])
-
-    source_file = sources.snapshot.files[0]
-
-    # Include PklProject, PklProject.deps.json, and resolved PKL packages so
-    # `pkl analyze imports` can resolve both local and remote package:// deps.
-    pkl_project_digest = await path_globs_to_digest(
-        PathGlobs(["**/PklProject", "**/PklProject.deps.json"])
+    return await _run_pkl_inference(
+        request.field_set.source,
+        request.field_set.project_dir,
+        all_targets,
     )
-    resolved_packages = await resolve_pkl_packages(PklResolvedPackagesRequest())
-    all_pkl_project_digest = await merge_digests(
-        MergeDigests((pkl_project_digest, resolved_packages.digest))
-    )
-
-    # Merge binary + source + PklProject files into sandbox.
-    input_digest = await merge_digests(
-        MergeDigests((pkl_binary.digest, sources.snapshot.digest, all_pkl_project_digest))
-    )
-
-    # Auto-detect project_dir if not explicitly set.
-    sandbox_snapshot = await digest_to_snapshot(input_digest)
-    effective_project_dir = field_set.project_dir.value or detect_project_dir(
-        source_file, frozenset(sandbox_snapshot.files)
-    )
-
-    # Run `pkl analyze imports -f json <source>`.
-    argv = build_pkl_argv(
-        pkl_binary.exe,
-        ("analyze", "imports"),
-        "-f", "json",
-        source_file,
-        project_dir=effective_project_dir,
-        use_cache=True,
-    )
-
-    result = await execute_process(
-        **implicitly(
-            Process(
-                argv=tuple(argv),
-                input_digest=input_digest,
-                description=f"Analyze PKL imports for {source_file}",
-            )
-        )
-    )
-
-    # Choose parsing strategy based on process success.
-    if result.exit_code == 0 and result.stdout:
-        import_paths = _parse_analyze_output(result.stdout, source_file)
-    else:
-        # Fallback: regex over the source text.
-        digest_contents = await get_digest_contents(sources.snapshot.digest)
-        source_text = ""
-        for fc in digest_contents:
-            if fc.path == source_file:
-                source_text = fc.content.decode(errors="replace")
-                break
-        import_paths = _extract_local_paths_from_regex(source_text, source_file)
-
-    if not import_paths:
-        return InferredDependencies([])
-
-    return InferredDependencies(_resolve_import_addresses(import_paths, all_targets))
 
 
 def rules():
