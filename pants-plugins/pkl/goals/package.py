@@ -16,7 +16,9 @@ from dataclasses import dataclass
 from pathlib import PurePath
 
 from pants.core.goals.package import BuiltPackage, BuiltPackageArtifact, PackageFieldSet
+from pants.core.util_rules.env_vars import environment_vars_subset
 from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
+from pants.engine.env_vars import EnvironmentVars, EnvironmentVarsRequest
 from pants.engine.fs import MergeDigests, PathGlobs
 from pants.engine.internals.graph import transitive_targets
 from pants.engine.intrinsics import (
@@ -34,6 +36,7 @@ from pkl.pkl_dependencies import PklResolvedPackagesRequest, resolve_pkl_package
 from pkl.pkl_process import build_pkl_argv, detect_project_dir
 from pkl.subsystem import PklBinaryRequest, resolve_pkl_binary
 from pkl.target_types import (
+    PklEnvVarsField,
     PklExpressionField,
     PklExtraArgsField,
     PklModulePathField,
@@ -71,6 +74,7 @@ class PklPackageFieldSet(PackageFieldSet):
     project_dir: PklProjectDirField
     module_path: PklModulePathField
     extra_args: PklExtraArgsField
+    env_vars: PklEnvVarsField
     dependencies: Dependencies
 
 
@@ -124,7 +128,13 @@ async def package_pkl(
         field_set.source.file_path, frozenset(sandbox_snapshot.files)
     )
 
-    # 6. Build extra args (shared between modes).
+    # 6. Resolve env vars requested by the target.
+    env_vars = await environment_vars_subset(
+        EnvironmentVarsRequest(field_set.env_vars.value or ()),
+        **implicitly(),
+    )
+
+    # 7. Build extra args (shared between modes).
     extra: list[str] = list(field_set.extra_args.value or ())
     if field_set.module_path.value:
         extra.extend(["--module-path", field_set.module_path.value])
@@ -151,6 +161,7 @@ async def package_pkl(
             **implicitly(
                 Process(
                     argv=tuple(argv),
+                    env=dict(env_vars),
                     input_digest=input_digest,
                     output_directories=(output_base,),
                     description=f"Package {source_path} (multi-output)",
@@ -191,6 +202,7 @@ async def package_pkl(
             **implicitly(
                 Process(
                     argv=tuple(argv),
+                    env=dict(env_vars),
                     input_digest=input_digest,
                     output_files=(out_path,),
                     description=f"Package {source_path} as {field_set.output_format.value}",

@@ -92,6 +92,12 @@ class PklExtraArgsField(StringSequenceField):
     help = "Extra arguments passed to the pkl command."
 
 
+class PklEnvVarsField(StringSequenceField):
+    alias = "env_vars"
+    default = ()
+    help = "Environment variables to pass to pkl eval (e.g. ['STAGE', 'AWS_ACCOUNT'])."
+
+
 class PklSkipTestField(BoolField):
     alias = "skip_test"
     default = False
@@ -195,6 +201,7 @@ class PklPackageTarget(Target):
         PklProjectDirField,
         PklModulePathField,
         PklExtraArgsField,
+        PklEnvVarsField,
         PklSkipEvalCheckField,
     )
     help = "A PKL module to evaluate and package into a config file (JSON, YAML, XML, etc)."
