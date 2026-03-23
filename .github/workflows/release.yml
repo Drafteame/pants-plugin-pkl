@@ -51,6 +51,9 @@ jobs:
     needs: bump_version
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
