@@ -3,6 +3,7 @@
 Unit tests cover:
 - JSON output parsing from `pkl analyze imports`
 - Regex fallback parser
+- PKL project alias resolution
 
 Integration tests (using RuleRunner) cover:
 - Full inference pipeline with a real pkl binary
@@ -24,10 +25,172 @@ from pkl.dependency_inference import (
     InferPklDependenciesRequest,
     PklInferenceFieldSet,
     _extract_local_paths_from_regex,
+    _normalize_path,
     _parse_analyze_output,
+    _parse_pkl_project_local_deps,
+    _resolve_projectpackage_uri,
     rules as dep_inf_rules,
 )
 
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — path normalisation helper
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizePath:
+    def test_plain_path(self) -> None:
+        assert _normalize_path("a/b/c") == "a/b/c"
+
+    def test_resolves_dotdot(self) -> None:
+        assert _normalize_path("a/b/../c") == "a/c"
+
+    def test_resolves_multiple_dotdot(self) -> None:
+        assert _normalize_path("a/b/c/../../d") == "a/d"
+
+    def test_resolves_leading_dotdot_at_root(self) -> None:
+        # ".." at the repo root has no parent to pop; result should be empty.
+        assert _normalize_path("../outside") == "outside"
+
+    def test_ignores_single_dot(self) -> None:
+        assert _normalize_path("a/./b") == "a/b"
+
+    def test_long_relative_chain(self) -> None:
+        # services/program-control/config/app + ../../../../config/pkl/PklProject
+        path = "services/program-control/config/app/../../../../config/pkl/PklProject"
+        assert _normalize_path(path) == "config/pkl/PklProject"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — PKL project alias map
+# ---------------------------------------------------------------------------
+
+
+class TestParsePklProjectLocalDeps:
+    def test_parses_single_dep(self) -> None:
+        content = """
+amends "pkl:Project"
+dependencies {
+  ["baseconfig"] = import("../../../../config/pkl/PklProject")
+}
+"""
+        result = _parse_pkl_project_local_deps(content, "services/app/config/app")
+        assert result == {"baseconfig": "config/pkl"}
+
+    def test_parses_multiple_deps(self) -> None:
+        content = """
+amends "pkl:Project"
+dependencies {
+  ["baseconfig"] = import("../../../config/pkl/PklProject")
+  ["shared"] = import("../../shared/PklProject")
+}
+"""
+        result = _parse_pkl_project_local_deps(content, "services/app")
+        assert result == {
+            "baseconfig": "config/pkl",
+            "shared": "shared",
+        }
+
+    def test_returns_empty_for_no_deps(self) -> None:
+        content = 'amends "pkl:Project"\n'
+        result = _parse_pkl_project_local_deps(content, "services/app")
+        assert result == {}
+
+    def test_ignores_remote_dep_syntax(self) -> None:
+        """Remote deps use { uri = "package://..." } syntax — not matched."""
+        content = """
+amends "pkl:Project"
+dependencies {
+  ["remote-pkg"] {
+    uri = "package://example.com/pkg@1.0.0"
+  }
+  ["local"] = import("../lib/PklProject")
+}
+"""
+        result = _parse_pkl_project_local_deps(content, "services/app")
+        # Only the local dep is parsed; the remote one is not matched.
+        # "services/app" + "../lib/PklProject" → parent "services/app/../lib" → "services/lib"
+        assert result == {"local": "services/lib"}
+
+    def test_normalizes_dotdot_components(self) -> None:
+        content = '["alias"] = import("../../../third/PklProject")\n'
+        result = _parse_pkl_project_local_deps(content, "a/b/c")
+        assert result == {"alias": "third"}
+
+    def test_root_level_project_dir(self) -> None:
+        """project_dir can be empty string when PklProject is at repo root."""
+        content = '["dep"] = import("../other/PklProject")\n'
+        result = _parse_pkl_project_local_deps(content, "")
+        assert result == {"dep": "other"}
+
+    def test_allows_whitespace_in_import(self) -> None:
+        content = '["alias"] = import( "../../lib/PklProject" )\n'
+        result = _parse_pkl_project_local_deps(content, "services/app")
+        assert result == {"alias": "lib"}
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — projectpackage:// resolver
+# ---------------------------------------------------------------------------
+
+
+class TestResolveProjectpackageUri:
+    def test_resolves_simple_uri(self) -> None:
+        alias_map = {"baseconfig": "config/pkl"}
+        result = _resolve_projectpackage_uri(
+            "projectpackage://localhost:0/baseconfig@1.0.0#/global.pkl",
+            alias_map,
+        )
+        assert result == "config/pkl/global.pkl"
+
+    def test_resolves_nested_file_path(self) -> None:
+        alias_map = {"shared": "infra/shared"}
+        result = _resolve_projectpackage_uri(
+            "projectpackage://localhost:0/shared@2.3.4#/subdir/types.pkl",
+            alias_map,
+        )
+        assert result == "infra/shared/subdir/types.pkl"
+
+    def test_returns_none_for_unknown_alias(self) -> None:
+        alias_map = {"other": "other/dir"}
+        result = _resolve_projectpackage_uri(
+            "projectpackage://localhost:0/baseconfig@1.0.0#/global.pkl",
+            alias_map,
+        )
+        assert result is None
+
+    def test_returns_none_for_empty_alias_map(self) -> None:
+        result = _resolve_projectpackage_uri(
+            "projectpackage://localhost:0/baseconfig@1.0.0#/global.pkl",
+            {},
+        )
+        assert result is None
+
+    def test_returns_none_without_fragment(self) -> None:
+        alias_map = {"baseconfig": "config/pkl"}
+        result = _resolve_projectpackage_uri(
+            "projectpackage://localhost:0/baseconfig@1.0.0",
+            alias_map,
+        )
+        assert result is None
+
+    def test_returns_none_for_non_projectpackage_uri(self) -> None:
+        alias_map = {"baseconfig": "config/pkl"}
+        result = _resolve_projectpackage_uri(
+            "file:///sandbox/config/pkl/global.pkl",
+            alias_map,
+        )
+        assert result is None
+
+    def test_namespaced_package_path(self) -> None:
+        """Package with nested path in URI — last segment is the package name."""
+        alias_map = {"mylib": "libs/mylib"}
+        result = _resolve_projectpackage_uri(
+            "projectpackage://example.com/org/mylib@0.5.0#/api.pkl",
+            alias_map,
+        )
+        assert result == "libs/mylib/api.pkl"
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +240,63 @@ class TestParseAnalyzeOutput:
         # checking no non-file URI appears.
         # The result should contain only file:// paths.
         assert all("pkl:test" not in p for p in paths)
+
+    def test_resolves_projectpackage_uri_with_alias_map(self) -> None:
+        """projectpackage:// URIs are resolved when an alias_map is provided."""
+        json_bytes = b"""{
+          "imports": {
+            "file:///sandbox/services/app/app.pkl": [
+              {"uri": "file:///sandbox/services/app/modules.pkl"},
+              {"uri": "projectpackage://localhost:0/baseconfig@1.0.0#/global.pkl"}
+            ]
+          }
+        }"""
+        alias_map = {"baseconfig": "config/pkl"}
+        paths = _parse_analyze_output(json_bytes, "services/app/app.pkl", alias_map=alias_map)
+        # file:// dep should be present
+        assert any("modules.pkl" in p for p in paths)
+        # projectpackage:// dep should be resolved via alias_map
+        assert "config/pkl/global.pkl" in paths
+
+    def test_ignores_projectpackage_uri_without_alias_map(self) -> None:
+        """projectpackage:// URIs are silently skipped when alias_map is None."""
+        json_bytes = b"""{
+          "imports": {
+            "file:///sandbox/services/app/app.pkl": [
+              {"uri": "projectpackage://localhost:0/baseconfig@1.0.0#/global.pkl"}
+            ]
+          }
+        }"""
+        paths = _parse_analyze_output(json_bytes, "services/app/app.pkl")
+        assert paths == []
+
+    def test_ignores_projectpackage_uri_with_unknown_alias(self) -> None:
+        """projectpackage:// URIs are skipped if alias is not in alias_map."""
+        json_bytes = b"""{
+          "imports": {
+            "file:///sandbox/services/app/app.pkl": [
+              {"uri": "projectpackage://localhost:0/unknown@1.0.0#/file.pkl"}
+            ]
+          }
+        }"""
+        alias_map = {"baseconfig": "config/pkl"}
+        paths = _parse_analyze_output(json_bytes, "services/app/app.pkl", alias_map=alias_map)
+        assert paths == []
+
+    def test_mixed_file_and_projectpackage_uris(self) -> None:
+        """Both file:// and resolved projectpackage:// appear in results."""
+        json_bytes = b"""{
+          "imports": {
+            "file:///sandbox/services/app/app.pkl": [
+              {"uri": "file:///sandbox/services/app/local.pkl"},
+              {"uri": "projectpackage://localhost:0/lib@0.1.0#/utils.pkl"}
+            ]
+          }
+        }"""
+        alias_map = {"lib": "shared/lib"}
+        paths = _parse_analyze_output(json_bytes, "services/app/app.pkl", alias_map=alias_map)
+        assert any("local.pkl" in p for p in paths)
+        assert "shared/lib/utils.pkl" in paths
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +356,72 @@ class TestRegexFallback:
         assert "src/a.pkl" in paths
         assert "src/b.pkl" in paths
         assert "src/base.pkl" in paths
+
+    # --- alias import tests ---
+
+    def test_resolves_alias_import_with_alias_map(self) -> None:
+        """@alias/... is resolved to a repo-relative path via alias_map."""
+        source = 'import "@baseconfig/global.pkl" as global\n'
+        alias_map = {"baseconfig": "config/pkl"}
+        paths = _extract_local_paths_from_regex(source, "services/app/app.pkl", alias_map=alias_map)
+        assert "config/pkl/global.pkl" in paths
+
+    def test_alias_import_skipped_without_alias_map(self) -> None:
+        """@alias/... imports are silently skipped when no alias_map is given."""
+        source = 'import "@baseconfig/global.pkl" as global\n'
+        paths = _extract_local_paths_from_regex(source, "services/app/app.pkl")
+        assert paths == []
+
+    def test_alias_import_skipped_for_unknown_alias(self) -> None:
+        """Unknown aliases are silently skipped."""
+        source = 'import "@unknown/file.pkl"\n'
+        alias_map = {"baseconfig": "config/pkl"}
+        paths = _extract_local_paths_from_regex(source, "services/app/app.pkl", alias_map=alias_map)
+        assert paths == []
+
+    def test_alias_import_with_nested_path(self) -> None:
+        """@alias/subdir/file.pkl resolves correctly."""
+        source = 'import "@shared/utils/helpers.pkl"\n'
+        alias_map = {"shared": "infra/shared"}
+        paths = _extract_local_paths_from_regex(source, "services/app/app.pkl", alias_map=alias_map)
+        assert "infra/shared/utils/helpers.pkl" in paths
+
+    def test_mix_local_and_alias_imports(self) -> None:
+        """Both local and @alias/... imports appear in results."""
+        source = (
+            'import "modules.pkl"\n'
+            'import "@baseconfig/global.pkl" as global\n'
+            'import "../shared/utils.pkl"\n'
+        )
+        alias_map = {"baseconfig": "config/pkl"}
+        paths = _extract_local_paths_from_regex(
+            source, "services/app/app.pkl", alias_map=alias_map
+        )
+        assert "services/app/modules.pkl" in paths
+        assert "config/pkl/global.pkl" in paths
+        assert "services/shared/utils.pkl" in paths
+
+    def test_multiple_aliases_in_alias_map(self) -> None:
+        """Multiple aliases are all resolved correctly."""
+        source = (
+            'import "@base/config.pkl"\n'
+            'import "@shared/types.pkl"\n'
+        )
+        alias_map = {"base": "common/base", "shared": "common/shared"}
+        paths = _extract_local_paths_from_regex(
+            source, "services/app/app.pkl", alias_map=alias_map
+        )
+        assert "common/base/config.pkl" in paths
+        assert "common/shared/types.pkl" in paths
+
+    def test_alias_used_in_amends(self) -> None:
+        """@alias/... works with amends and extends too."""
+        source = 'amends "@baseconfig/BaseAmends.pkl"\n'
+        alias_map = {"baseconfig": "config/pkl"}
+        paths = _extract_local_paths_from_regex(
+            source, "services/app/app.pkl", alias_map=alias_map
+        )
+        assert "config/pkl/BaseAmends.pkl" in paths
 
 
 # ---------------------------------------------------------------------------

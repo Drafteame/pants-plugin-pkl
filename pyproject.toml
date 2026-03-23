@@ -10,7 +10,7 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
 authors = [{ name = "Draftea" }]
-dependencies = ["pantsbuild.pants>=2.31,<2.32"]
+dependencies = []
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
