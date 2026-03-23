@@ -1,3 +1,12 @@
+## v1.0.1 (2026-03-23)
+
+
+- Merge pull request #5 from Drafteame/chore/fix-version-sync
+- chore: fix version sync
+- chore: save
+- chore: fix test-release workflow to read version from git tags
+- chore: fix version sync between commitizen and pyproject.toml
+
 ## v0.3.0 (2026-03-23)
 
 
